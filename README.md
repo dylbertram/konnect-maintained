@@ -5,51 +5,29 @@
 <img src="resources/images/KiCAD-MCP-Server-rust.svg" alt="KiCAD-MCP-Server Logo" height="240" />
 
 
-# Konnect is MOVING!!!
+# Konnect maintained
 
 </div>
 
-> ## Konnect has moved to Konnect-EDA
->
-> **This repository will be archived at midnight (US Eastern) at the end of Sunday, October 25, 2026.**
-> After that it's read-only. Everything here stays readable, and the releases already published stay
-> available under the AGPL-3.0, but no new issues, comments or pull requests can be added.
->
-> Konnect continues as **[Konnect-EDA](https://github.com/Orchis-ai-LLC/Konnect-EDA)**, from
-> Orchis.ai LLC. It's the same AI-assisted KiCad design tool, and all development continues there:
->
-> - **Downloads:** the [Konnect-EDA Releases page](https://github.com/Orchis-ai-LLC/Konnect-EDA/releases);
->   the first release is coming soon. Konnect-EDA is commercial, closed-source software, **free to use
->   during the beta** (until version 1.0).
-> - **Bugs and feature requests:** the
->   [Konnect-EDA issue tracker](https://github.com/Orchis-ai-LLC/Konnect-EDA/issues).
-> - **Want to help build it?** Sign up to contribute at
->   **[orchis.ai/konnect/join](https://orchis.ai/konnect/join)**.
-> - **Contributed to Konnect?** Please answer your sign-off email, or sign in with GitHub at
->   [orchis.ai/konnect/sign-off](https://orchis.ai/konnect/sign-off). It's open until November 20.
->
-> Thank you to everyone who built Konnect with us.
+This is an independent maintenance repository derived from
+[mixelpixx/Konnect](https://github.com/mixelpixx/Konnect), created by
+[@mixelpixx](https://github.com/mixelpixx) and its contributors. The original
+repository was archived in October 2026. Its Git history, contributor attribution,
+and [AGPL-3.0 license](LICENSE) are preserved here.
+
+Maintained by [@dylbertram](https://github.com/dylbertram). This project is not
+affiliated with or endorsed by Orchis.ai LLC or its commercial Konnect-EDA product.
+
+- [Issues](https://github.com/dylbertram/konnect-maintained/issues) and
+  [pull requests](https://github.com/dylbertram/konnect-maintained/pulls)
+- [Releases](https://github.com/dylbertram/konnect-maintained/releases), with no
+  independently maintained release published yet
+- [Maintenance and migration status](MAINTENANCE.md)
 
 > **Status: beta.** The core toolchain is tested and working, but this is a young
 > release and it wants real-world mileage and review. Issues and PRs are welcome —
 > see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 > [naming conventions](docs/NAMING_CONVENTIONS.md).
-
-> ## Add realtime research to KiCAD MCP and Konnect. Introducing Nimrod
->
-> [**Nimrod**](https://nimrod.orchis.ai) is our web-research MCP server:
-> quality-scored Google search, clean webpage extraction, and deep multi-source
-> research. Design the board with Konnect while Nimrod pulls live parts availability, datasheets,
-> and errata — no more guessing from year-old training data
->
-> - Works with claude.ai, Claude Desktop, Claude Code, VS Code, and any MCP client
-> - 1 credit = 1 search · extraction always free · free 50-credit trial, no card
-> - Official MCP Registry: [`ai.orchis/nimrod`](https://registry.modelcontextprotocol.io)
-
-
-
-
-
 
 **AI-assisted PCB design for KiCAD 10.** Konnect is a native KiCAD plugin — a single
 Rust binary — that lets Claude and other AI assistants design schematics and PCBs
