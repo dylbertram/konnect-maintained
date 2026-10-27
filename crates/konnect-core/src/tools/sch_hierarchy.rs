@@ -1213,8 +1213,21 @@ fn locate_sheet_parent(
     };
     // A root needs no hierarchy walk, which would refuse one that predates
     // root UUIDs before this write could add it.
-    if parent_path.with_extension("kicad_pro").is_file() {
-        return owned_by(project_name_for(parent_path)).map(own_root);
+    let project_file = parent_path.with_extension("kicad_pro");
+    if project_file.is_file() {
+        let mut parent = own_root(owned_by(project_name_for(parent_path))?);
+        if let Some(uuid) =
+            super::project_root_sheet_uuid(&project_file, parent_path).map_err(|reason| {
+                invalid_arg(
+                    "schematic",
+                    &format!("Cannot resolve project root UUID: {reason}"),
+                )
+            })?
+        {
+            parent.instance_paths = vec![format!("/{uuid}")];
+            parent.root_uuid = uuid;
+        }
+        return Ok(parent);
     }
     let owner = super::resolve_schematic_ownership(parent_path)
         .map_err(|error| error.into_tool_result())?;
@@ -5682,6 +5695,63 @@ mod instance_path_lifecycle_tests {
 
         assert_eq!(std::fs::read(&child).unwrap(), before);
         assert_eq!(body["unlinked_symbol_instances"], json!(0));
+    }
+
+    #[tokio::test]
+    async fn project_top_level_uuid_is_shared_by_root_and_nested_sheet_writers() {
+        const PROJECT: &str = "b17a773a-65cc-45fc-a3bd-749216d1b68c";
+        for nested in [false, true] {
+            let (tmp, root) = project();
+            let project_file = root.with_extension("kicad_pro");
+            let mut metadata: Value =
+                serde_json::from_slice(&std::fs::read(&project_file).unwrap()).unwrap();
+            metadata["schematic"]["top_level_sheets"] = json!([{
+                "filename": "demo.kicad_sch", "uuid": PROJECT
+            }]);
+            std::fs::write(&project_file, serde_json::to_vec(&metadata).unwrap()).unwrap();
+            let project_before = std::fs::read(&project_file).unwrap();
+            let parent = if nested {
+                tmp.path().join("mid.kicad_sch")
+            } else {
+                root.clone()
+            };
+            let prefix = if nested {
+                format!("/{PROJECT}/{MID}")
+            } else {
+                format!("/{PROJECT}")
+            };
+            let (failed, body) = served(
+                "add_hierarchical_sheet",
+                json!({
+                    "schematic": parent, "sheet_file": "leaf.kicad_sch", "sheet_name": "Leaf"
+                }),
+            )
+            .await;
+            assert!(!failed, "{body}");
+            let leaf = tmp.path().join("leaf.kicad_sch");
+            let live = format!("{prefix}/{}", sheet_uuid(&parent, "Leaf"));
+            assert_eq!(recorded(&leaf), vec![("R3".to_owned(), demo(&[live]))]);
+            writable(&leaf).unwrap();
+
+            let (failed, body) = served(
+                "duplicate_sheet",
+                json!({
+                    "schematic": parent, "source_sheet_name": "Leaf",
+                    "new_sheet_name": "Copy", "new_file": "copy.kicad_sch"
+                }),
+            )
+            .await;
+            assert!(!failed, "{body}");
+            let copy = tmp.path().join("copy.kicad_sch");
+            let live = format!("{prefix}/{}", sheet_uuid(&parent, "Copy"));
+            assert_eq!(recorded(&copy), vec![("R3".to_owned(), demo(&[live]))]);
+            writable(&copy).unwrap();
+            assert_eq!(
+                cse::Schematic::load(&root).unwrap().uuid.as_deref(),
+                Some(ROOT)
+            );
+            assert_eq!(std::fs::read(&project_file).unwrap(), project_before);
+        }
     }
 
     #[tokio::test]
