@@ -1,0 +1,34 @@
+{
+  "ipc_candidate_commit": "aabe85e6efe79457f64b4b6cd9293078f2f560c3",
+  "upstream_original_commit": "9807f3794173cfe092ea17938e803c404f29418f",
+  "headless_candidate_commit": "5786c7e7848a13e02d68ca136f6af3ba846d0af9",
+  "platform": "macOS Apple Silicon",
+  "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "standalone_gates": {
+    "fmt": 0,
+    "clippy": 0,
+    "tests": 0,
+    "docs": 0
+  },
+  "combined_gates": {
+    "fmt": 0,
+    "clippy": 0,
+    "tests": 0,
+    "docs": 0
+  },
+  "combined_tree": "d49842cf1b74cab8a3fed2dcd500f0942cd75fe8",
+  "fixed_trial_count": 100,
+  "fixed_trial_failures": 0,
+  "negative_controls": [
+    {
+      "control": "disable ENOTCONN arm",
+      "observed": "regression fails on SystemErr(57)"
+    },
+    {
+      "control": "map all SystemErr values",
+      "observed": "regression fails on EIO / SystemErr(5)"
+    }
+  ],
+  "hosted_ci": "not run; Actions remain disabled",
+  "main_merged": false
+}

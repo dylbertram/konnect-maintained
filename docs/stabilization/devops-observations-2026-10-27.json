@@ -1,0 +1,450 @@
+{
+  "captured_at": "2026-10-27T18:22:26.271268+00:00",
+  "repository": "dylbertram/konnect-maintained",
+  "checkout_commit": "9a63092889a2366d905d77fc8df4643f18ec5e77",
+  "settings": {
+    "repository": {
+      "allow_auto_merge": false,
+      "allow_merge_commit": true,
+      "allow_rebase_merge": true,
+      "allow_squash_merge": true,
+      "archived": false,
+      "default_branch": "main",
+      "delete_branch_on_merge": false,
+      "full_name": "dylbertram/konnect-maintained",
+      "permissions": {
+        "admin": true,
+        "maintain": true,
+        "pull": true,
+        "push": true,
+        "triage": true
+      },
+      "security_and_analysis": {
+        "dependabot_security_updates": {
+          "status": "disabled"
+        },
+        "secret_scanning": {
+          "status": "enabled"
+        },
+        "secret_scanning_non_provider_patterns": {
+          "status": "disabled"
+        },
+        "secret_scanning_push_protection": {
+          "status": "enabled"
+        },
+        "secret_scanning_validity_checks": {
+          "status": "disabled"
+        }
+      }
+    },
+    "actions": {
+      "enabled": false,
+      "sha_pinning_required": false
+    },
+    "workflow_token": {
+      "default_workflow_permissions": "read",
+      "can_approve_pull_request_reviews": false
+    },
+    "rulesets": [],
+    "main_protection": {
+      "status": "unavailable",
+      "error": "gh: Branch not protected (HTTP 404)"
+    },
+    "environments": {
+      "environments": [],
+      "total_count": 0
+    },
+    "secret_names": {
+      "names": [],
+      "total_count": 0
+    },
+    "variable_names": {
+      "names": [],
+      "total_count": 0
+    },
+    "webhooks": [],
+    "codeowners_errors": {
+      "errors": [
+        {
+          "column": 45,
+          "kind": "Unknown owner",
+          "line": 8,
+          "message": "Unknown owner on line 8: make sure @mixelpixx exists and has write access to the repository\n\n  *                                           @mixelpixx\n                                              ^"
+        },
+        {
+          "column": 45,
+          "kind": "Unknown owner",
+          "line": 14,
+          "message": "Unknown owner on line 14: make sure @neusse exists and has write access to the repository\n\n  /crates/konnect/assets/                     @neusse @mixelpixx\n                                              ^"
+        },
+        {
+          "column": 53,
+          "kind": "Unknown owner",
+          "line": 14,
+          "message": "Unknown owner on line 14: make sure @mixelpixx exists and has write access to the repository\n\n  /crates/konnect/assets/                     @neusse @mixelpixx\n                                                      ^"
+        },
+        {
+          "column": 45,
+          "kind": "Unknown owner",
+          "line": 15,
+          "message": "Unknown owner on line 15: make sure @neusse exists and has write access to the repository\n\n  /crates/konnect/src/manifest.rs             @neusse @mixelpixx\n                                              ^"
+        },
+        {
+          "column": 53,
+          "kind": "Unknown owner",
+          "line": 15,
+          "message": "Unknown owner on line 15: make sure @mixelpixx exists and has write access to the repository\n\n  /crates/konnect/src/manifest.rs             @neusse @mixelpixx\n                                                      ^"
+        },
+        {
+          "column": 45,
+          "kind": "Unknown owner",
+          "line": 20,
+          "message": "Unknown owner on line 20: make sure @neusse exists and has write access to the repository\n\n  /crates/konnect-core/src/specctra.rs        @neusse @mixelpixx\n                                              ^"
+        },
+        {
+          "column": 53,
+          "kind": "Unknown owner",
+          "line": 20,
+          "message": "Unknown owner on line 20: make sure @mixelpixx exists and has write access to the repository\n\n  /crates/konnect-core/src/specctra.rs        @neusse @mixelpixx\n                                                      ^"
+        },
+        {
+          "column": 45,
+          "kind": "Unknown owner",
+          "line": 24,
+          "message": "Unknown owner on line 24: make sure @neusse exists and has write access to the repository\n\n  /crates/konnect-core/src/kicad_install.rs   @neusse @mixelpixx\n                                              ^"
+        },
+        {
+          "column": 53,
+          "kind": "Unknown owner",
+          "line": 24,
+          "message": "Unknown owner on line 24: make sure @mixelpixx exists and has write access to the repository\n\n  /crates/konnect-core/src/kicad_install.rs   @neusse @mixelpixx\n                                                      ^"
+        }
+      ]
+    },
+    "actions_runs": {
+      "total_count": 0
+    },
+    "release_count": 0
+  },
+  "workflow_files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "b9b2a0dcbcbf8a87db1d3521c92bcbc37b220e4a0082e8b33cdb4312c032e4de"
+    },
+    {
+      "path": ".github/workflows/e2e-kicad.yml",
+      "sha256": "beeee0a68761416ac4d514f893f17661c10b8a2f05bfd65b1b186b5d674727d7"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "sha256": "2f1d2622842bd25c2f4aa0f5188e2e950ee905c3006c89b2d9d1c5be205b255b"
+    },
+    {
+      "path": ".github/workflows/wontfix-review-window.yml",
+      "sha256": "634b8e34d0dc17809982f68320b5dad406573480c3f9976f6e1104d5a7c3f81a"
+    }
+  ],
+  "action_uses": [
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 26,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 27,
+      "use": "dtolnay/rust-toolchain@stable"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 28,
+      "use": "taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 32,
+      "use": "Swatinem/rust-cache@v2"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 57,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 58,
+      "use": "actions/setup-python@v7"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 75,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 76,
+      "use": "cachix/install-nix-action@v31"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 93,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 94,
+      "use": "dtolnay/rust-toolchain@stable"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 95,
+      "use": "Swatinem/rust-cache@v2"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 109,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 110,
+      "use": "dtolnay/rust-toolchain@stable"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 113,
+      "use": "taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 117,
+      "use": "Swatinem/rust-cache@v2"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 132,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 133,
+      "use": "EmbarkStudios/cargo-deny-action@v2"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 142,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 143,
+      "use": "dtolnay/rust-toolchain@stable"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 153,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 154,
+      "use": "actions/setup-python@v7"
+    },
+    {
+      "file": ".github/workflows/e2e-kicad.yml",
+      "line": 36,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/e2e-kicad.yml",
+      "line": 38,
+      "use": "dtolnay/rust-toolchain@stable"
+    },
+    {
+      "file": ".github/workflows/e2e-kicad.yml",
+      "line": 40,
+      "use": "taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0"
+    },
+    {
+      "file": ".github/workflows/e2e-kicad.yml",
+      "line": 45,
+      "use": "Swatinem/rust-cache@v2"
+    },
+    {
+      "file": ".github/workflows/e2e-kicad.yml",
+      "line": 87,
+      "use": "actions/setup-python@v7"
+    },
+    {
+      "file": ".github/workflows/e2e-kicad.yml",
+      "line": 101,
+      "use": "actions/upload-artifact@v7"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 35,
+      "use": "./.github/workflows/e2e-kicad.yml"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 60,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 62,
+      "use": "dtolnay/rust-toolchain@stable"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 73,
+      "use": "taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 78,
+      "use": "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 99,
+      "use": "actions/upload-artifact@v7"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 121,
+      "use": "actions/checkout@v7"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 123,
+      "use": "dtolnay/rust-toolchain@stable"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 132,
+      "use": "taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 137,
+      "use": "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 237,
+      "use": "actions/setup-python@v7"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 251,
+      "use": "actions/upload-artifact@v7"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 265,
+      "use": "actions/download-artifact@v8"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "line": 271,
+      "use": "softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64"
+    },
+    {
+      "file": ".github/workflows/wontfix-review-window.yml",
+      "line": 25,
+      "use": "actions/github-script@v9"
+    }
+  ],
+  "action_refs": [
+    {
+      "use": "EmbarkStudios/cargo-deny-action@v2",
+      "pinned": false,
+      "resolved": true,
+      "object_sha": "b66acf5e9fe20f8aba065be86778a8a4c846f902",
+      "object_type": "tag"
+    },
+    {
+      "use": "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
+      "pinned": true,
+      "resolved": true,
+      "object_sha": "6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
+      "object_type": "commit"
+    },
+    {
+      "use": "Swatinem/rust-cache@v2",
+      "pinned": false,
+      "resolved": true,
+      "object_sha": "e9d7b9f1e587218970671bac74e5511ed9506e6a",
+      "object_type": "tag"
+    },
+    {
+      "use": "actions/checkout@v7",
+      "pinned": false,
+      "resolved": true,
+      "object_sha": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "object_type": "commit"
+    },
+    {
+      "use": "actions/download-artifact@v8",
+      "pinned": false,
+      "resolved": true,
+      "object_sha": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
+      "object_type": "commit"
+    },
+    {
+      "use": "actions/github-script@v9",
+      "pinned": false,
+      "resolved": true,
+      "object_sha": "373c709c69115d41ff229c7e5df9f8788daa9553",
+      "object_type": "tag"
+    },
+    {
+      "use": "actions/setup-python@v7",
+      "pinned": false,
+      "resolved": true,
+      "object_sha": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+      "object_type": "commit"
+    },
+    {
+      "use": "actions/upload-artifact@v7",
+      "pinned": false,
+      "resolved": true,
+      "object_sha": "cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "object_type": "commit"
+    },
+    {
+      "use": "cachix/install-nix-action@v31",
+      "pinned": false,
+      "resolved": true,
+      "object_sha": "d9186cbdca7adedf113a159fa91f725a27866771",
+      "object_type": "tag"
+    },
+    {
+      "use": "dtolnay/rust-toolchain@stable",
+      "pinned": false,
+      "resolved": true,
+      "object_sha": "b725eda525362e7cf34af9a7243cac1e3f01a7ec",
+      "object_type": "commit"
+    },
+    {
+      "use": "softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64",
+      "pinned": true,
+      "resolved": true,
+      "object_sha": "efb35369e0ad2afab669f228072c1b0d510eae64",
+      "object_type": "commit"
+    },
+    {
+      "use": "taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0",
+      "pinned": true,
+      "resolved": true,
+      "object_sha": "83ac0ad63c0167e6f06796fab0fce28db1bf3db0",
+      "object_type": "commit"
+    }
+  ],
+  "external_action_occurrences": 41,
+  "unique_external_refs": 12,
+  "mutable_refs": 9,
+  "unresolved_refs": [],
+  "coverage": "Repository settings and checked-in workflow/config inspection only. No hosted execution, deployment, signing, or secret-value access."
+}
