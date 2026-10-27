@@ -353,7 +353,7 @@ pub fn tools() -> Vec<ToolDef> {
                         "enum": ["auto", "right", "left", "up", "down"],
                         "default": "auto"
                     },
-                    "stub_length": { "type": "number", "default": 2.54,
+                    "stub_length": { "type": "number", "minimum": 0, "default": 2.54,
                         "description": "Length of the wire stub in mm" },
                     "label_type": {
                         "type": "string",
@@ -2495,7 +2495,20 @@ async fn handle_connect_to_net(
         Err(e) => return Ok(e),
     };
     let direction = opt_str(args, "direction").unwrap_or("auto");
-    let stub_length = opt_f64(args, "stub_length").unwrap_or(2.54);
+    let stub_length = if args.get("stub_length").is_some() {
+        match require_f64(args, "stub_length") {
+            Ok(value) => value,
+            Err(error) => return Ok(error),
+        }
+    } else {
+        2.54
+    };
+    if !stub_length.is_finite() || stub_length < 0.0 {
+        return Ok(super::invalid_arg(
+            "stub_length",
+            "must be finite and non-negative",
+        ));
+    }
     let label_type = opt_str(args, "label_type").unwrap_or("net_label");
 
     let (_, tree) = read_schematic(&sch_path)?;
@@ -2567,7 +2580,9 @@ async fn handle_connect_to_net(
     Ok(CallToolResult::json(&json!({
         "connected": net,
         "direction": dir.name,
-        "wire": { "x1": pin_x, "y1": pin_y, "x2": label_x, "y2": label_y },
+        "wire": if (pin_x, pin_y) == (label_x, label_y) { None } else {
+            Some(json!({ "x1": pin_x, "y1": pin_y, "x2": label_x, "y2": label_y }))
+        },
         "label": { "x": label_x, "y": label_y, "rotation": label_rot }
     })))
 }
@@ -2585,7 +2600,9 @@ pub(crate) fn add_net_stub(
     net: &str,
 ) -> (f64, f64, f64) {
     let end = dir.end(pin, stub_length);
-    add_stub_wire(sch, pins, pin, end);
+    if pin != end {
+        add_stub_wire(sch, pins, pin, end);
+    }
     add_stub_label(sch, label_type, net, end, dir.label_rotation);
     (end.0, end.1, dir.label_rotation)
 }
@@ -2791,6 +2808,126 @@ async fn handle_add_schematic_connection(
     Ok(CallToolResult::json(&json!({
         "connected": { "from": [x1, y1], "to": [x2, y2] }
     })))
+}
+
+#[cfg(test)]
+mod zero_length_stub_tests {
+    use super::*;
+    use crate::mcp::{handler::McpHandler, protocol::ToolContent};
+    use crate::tools::ServerConfig;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("stub.kicad_sch");
+        std::fs::write(
+            &path,
+            include_bytes!("../../tests/fixtures/junction_reconcile.kicad_sch"),
+        )
+        .unwrap();
+        (directory, path)
+    }
+
+    async fn connect(
+        path: &Path,
+        length: Option<serde_json::Value>,
+        served: bool,
+        label_type: &str,
+    ) -> (bool, serde_json::Value) {
+        let mut args = json!({"schematic": path, "pin_x": 120.65, "pin_y": 139.7,
+            "net": "ZERO_STUB_TEST", "direction": "right", "label_type": label_type});
+        if let Some(length) = length {
+            args["stub_length"] = length;
+        }
+        let config = ServerConfig {
+            auto_load_toolsets: true,
+            ..ServerConfig::default()
+        };
+        if served {
+            let handler = McpHandler::new(config).await.unwrap();
+            let response = handler
+                .handle_message(json!({"jsonrpc": "2.0", "id": 950,
+                "method": "tools/call", "params": {"name": "connect_to_net", "arguments": args}}))
+                .await
+                .unwrap()
+                .result
+                .unwrap();
+            (
+                response["isError"] == true,
+                serde_json::from_str(response["content"][0]["text"].as_str().unwrap()).unwrap(),
+            )
+        } else {
+            let context = ToolContext::new(config, Arc::new(crate::router::ToolRouter::new()));
+            let response = handle_connect_to_net(&args, &context).await.unwrap();
+            let ToolContent::Text { text } = &response.content[0] else {
+                panic!("text result")
+            };
+            (response.is_error, serde_json::from_str(text).unwrap())
+        }
+    }
+
+    #[tokio::test]
+    async fn zero_length_stub_preserves_wires_and_junctions_and_places_only_the_label() {
+        for served in [false, true] {
+            for label_type in ["net_label", "global_label"] {
+                let (_directory, path) = fixture();
+                let before = read_schematic(&path).unwrap().1;
+                let (failed, body) = connect(&path, Some(json!(0.0)), served, label_type).await;
+                assert!(!failed, "{body}");
+                let after = read_schematic(&path).unwrap().1;
+                assert_eq!(after.find_all("wire"), before.find_all("wire"));
+                assert_eq!(after.find_all("junction"), before.find_all("junction"));
+                let tag = if label_type == "global_label" {
+                    "global_label"
+                } else {
+                    "label"
+                };
+                let label = after
+                    .find_all(tag)
+                    .into_iter()
+                    .find(|node| {
+                        node.get(1).and_then(konnect_sexp::SexpNode::as_str)
+                            == Some("ZERO_STUB_TEST")
+                    })
+                    .unwrap();
+                let at = label.find("at").unwrap();
+                assert_eq!(at.get_f64(1), Some(120.65));
+                assert_eq!(at.get_f64(2), Some(139.7));
+                assert!(body["wire"].is_null(), "{body}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn zero_length_stub_invalid_lengths_refuse_without_writing() {
+        for served in [false, true] {
+            for length in [json!(-1.27), json!("wrong"), json!(null)] {
+                let (_directory, path) = fixture();
+                let before = std::fs::read(&path).unwrap();
+                let (failed, body) = connect(&path, Some(length), served, "net_label").await;
+                assert!(failed, "{body}");
+                assert_eq!(body["error"]["kind"], "invalid_argument", "{body}");
+                assert_eq!(std::fs::read(&path).unwrap(), before);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn zero_length_stub_positive_and_omitted_lengths_keep_the_wire() {
+        for length in [None, Some(json!(1.27))] {
+            let (_directory, path) = fixture();
+            let count = read_schematic(&path).unwrap().1.find_all("wire").len();
+            let expected = if length.is_none() { 123.19 } else { 121.92 };
+            let (failed, body) = connect(&path, length, true, "net_label").await;
+            assert!(!failed, "{body}");
+            assert_eq!(
+                read_schematic(&path).unwrap().1.find_all("wire").len(),
+                count + 1
+            );
+            assert!((body["wire"]["x2"].as_f64().unwrap() - expected).abs() < 1e-9);
+        }
+    }
 }
 
 #[cfg(test)]
