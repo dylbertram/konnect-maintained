@@ -53,6 +53,15 @@ def triage(record):
     return "needs-reproduction", "Confirm the reported behavior against the maintained baseline and identify the smallest regression test."
 
 
+def apply_review_overrides(catalog, overrides):
+    allowed = {"stage", "reason", "local_pull_request", "local_commit", "local_validation"}
+    for item in catalog:
+        override = overrides.get(str(item["number"]), {})
+        if set(override) - allowed:
+            raise RuntimeError(f"Unsupported review override fields for #{item['number']}")
+        item.update(override)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("snapshot", type=Path)
@@ -92,6 +101,9 @@ def main():
             "pr_changed_files": record.get("pull", {}).get("changed_files"),
             "comments_imported": len(record["comments"]) + len(record["reviews"]) + len(record["review_comments"]),
         })
+    overrides_path = args.output / "review-overrides.json"
+    overrides = json.loads(overrides_path.read_text()) if overrides_path.exists() else {}
+    apply_review_overrides(catalog, overrides)
     args.output.mkdir(parents=True, exist_ok=True)
     archive = args.output / "upstream-open-2026-10-27.json.gz"
     archive.write_bytes(gzip.compress(raw, mtime=0))
@@ -107,6 +119,8 @@ def main():
         "upstream_url": item["source_url"], "triage_stage": item["stage"],
         "triage_basis": item["reason"], "engineering_review_complete": False,
         "snapshot_captured_at": snapshot["captured_at"],
+        "local_pull_request": item.get("local_pull_request"),
+        "local_validation": item.get("local_validation"),
     }} for item in catalog]
     # Reuse the bounded local import transport for tool calls, not direct DB writes.
     for i in range(0, len(updates), 10):
@@ -114,7 +128,7 @@ def main():
     rows = ["# Archived backlog catalog", "",
             f"Captured {snapshot['captured_at']} from {snapshot['repository_url']}.", "",
             f"{snapshot['issues']} open issues, {snapshot['pull_requests']} open PRs; {manifest['comments']} discussion/review entries imported into Kata.", "",
-            "Every item has a preliminary queue and rationale. This is not a claim that every bug has been reproduced or every PR reviewed. Upstream assignments and approvals are not inherited.", "",
+            "Every item has a preliminary queue and rationale, updated by documented local screening in `review-overrides.json`. This is not a claim that every bug has been reproduced or every PR reviewed. Upstream assignments and approvals are not inherited. See `REVIEW_NOTES.md` for the first implementation batch and its remaining validation gates.", "",
             "See `catalog.json` for per-item rationale, references, author, original labels, Kata identity, and PR head SHA. The compressed JSON snapshot preserves full bodies, discussions, PR reviews, files/diffs, and commit metadata.", "",
             "## Preliminary queues", "", "| Queue | Items |", "|---|---:|"]
     rows.extend(f"| {stage} | {count} |" for stage, count in sorted(result["stage_counts"].items()))

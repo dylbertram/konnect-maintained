@@ -14,10 +14,13 @@
     "documentation-review": 3,
     "pr-review": 55,
     "review-findings": 4,
+    "baseline-test-blocker": 1,
     "historical-decision-review": 3,
-    "small-fix-candidate": 5,
+    "implemented-validation-blocked": 1,
     "dependency-review": 6,
-    "historical-context": 1
+    "small-fix-candidate": 2,
+    "historical-context": 1,
+    "implemented-awaiting-review": 1
   },
   "items": [
     {
@@ -1918,8 +1921,8 @@
       ],
       "kata_ref": "konnect-maintained#kjwe",
       "kata_url": "https://kata.bertramdesigns.com/kata?issue=01M5YYNKG1D6KQ76TT7YE9KJWE#direct=1",
-      "stage": "needs-reproduction",
-      "reason": "Confirm the reported behavior against the maintained baseline and identify the smallest regression test.",
+      "stage": "baseline-test-blocker",
+      "reason": "The unchanged IPC handshake test fails intermittently on macOS with ENOTCONN classified as TransportError rather than HandshakeFailed. Ten fixed diagnostic trials produced eight passes and two failures. Review upstream PR #911 separately; do not hide the failure by retrying until green.",
       "engineering_review_complete": false,
       "referenced_upstream_numbers": [
         677,
@@ -1927,7 +1930,14 @@
       ],
       "pr_head_sha": null,
       "pr_changed_files": null,
-      "comments_imported": 0
+      "comments_imported": 0,
+      "local_validation": {
+        "ipc_tree_sha": "b3009fce8293c419ff53f5194fbc31768b3caab2",
+        "main_and_834_ipc_trees_identical": true,
+        "diagnostic_trials": 10,
+        "passed": 8,
+        "failed": 2
+      }
     },
     {
       "number": 714,
@@ -3502,13 +3512,23 @@
       ],
       "kata_ref": "konnect-maintained#c2xd",
       "kata_url": "https://kata.bertramdesigns.com/kata?issue=01M5YYNTTTEJMNP9143KY2C2XD#direct=1",
-      "stage": "small-fix-candidate",
-      "reason": "Two Java launch sites omit the headless JVM option; inspect command ordering and cover both sites.",
+      "stage": "implemented-validation-blocked",
+      "reason": "Headless JVM option implemented at both actual Freerouting JAR launch sites. Two command-order regressions fail before the fix and pass after it. Formatting, Clippy, and doctests pass; full workspace tests hit unchanged baseline issue #711. Real routing/Dock acceptance and review remain pending.",
       "engineering_review_complete": false,
       "referenced_upstream_numbers": [],
       "pr_head_sha": null,
       "pr_changed_files": null,
-      "comments_imported": 0
+      "comments_imported": 0,
+      "local_pull_request": "https://github.com/dylbertram/konnect-maintained/pull/5",
+      "local_commit": "5786c7e",
+      "local_validation": {
+        "focused_tests": "pass",
+        "formatting": "pass",
+        "clippy": "pass",
+        "doctests": "pass",
+        "workspace_tests": "failed: upstream #711",
+        "live_freerouting": "not run"
+      }
     },
     {
       "number": 836,
@@ -4282,8 +4302,8 @@
       "upstream_labels": [],
       "kata_ref": "konnect-maintained#4545",
       "kata_url": "https://kata.bertramdesigns.com/kata?issue=01M5YYNV5N5XCXBA73JFBA4545#direct=1",
-      "stage": "small-fix-candidate",
-      "reason": "Blank configured IPC address blocks fallback; inspect configuration precedence and test without live IPC.",
+      "stage": "needs-reproduction",
+      "reason": "Current resolve_ipc_address_with already falls back for an empty string, and ipc_socket_path is a supported JSON alias. PR #872 mainly trims whitespace. The original empty-setting failure has not been reproduced on this baseline; do not claim it fixed.",
       "engineering_review_complete": false,
       "referenced_upstream_numbers": [
         419
@@ -5663,13 +5683,23 @@
       "upstream_labels": [],
       "kata_ref": "konnect-maintained#eczm",
       "kata_url": "https://kata.bertramdesigns.com/kata?issue=01M5YYP0EJNG8YM3WR7VHRECZM#direct=1",
-      "stage": "small-fix-candidate",
-      "reason": "Single-tool zero-length stub differs from batch semantics; reproduce no-wire and refusal behavior through dispatch.",
+      "stage": "implemented-awaiting-review",
+      "reason": "Zero-length stubs now add only a label and report wire: null; invalid lengths refuse before mutation. Native-fixture direct/served regressions pass, as do all four local workspace gates. Draft remains unmerged; hosted CI, review, and live-KiCad acceptance are pending.",
       "engineering_review_complete": false,
       "referenced_upstream_numbers": [],
       "pr_head_sha": null,
       "pr_changed_files": null,
-      "comments_imported": 0
+      "comments_imported": 0,
+      "local_pull_request": "https://github.com/dylbertram/konnect-maintained/pull/4",
+      "local_commit": "b4a60f0",
+      "local_validation": {
+        "focused_tests": "pass",
+        "formatting": "pass",
+        "clippy": "pass",
+        "doctests": "pass",
+        "workspace_tests": "pass",
+        "live_kicad": "not run"
+      }
     },
     {
       "number": 951,

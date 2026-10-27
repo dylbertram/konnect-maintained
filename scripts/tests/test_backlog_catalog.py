@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_backlog_import import normalize
-from triage_archived_backlog import triage
+from triage_archived_backlog import apply_review_overrides, triage
 
 
 def issue(number=1, title="Reported bug", labels=()):
@@ -50,6 +50,17 @@ class ImportTests(unittest.TestCase):
 
 
 class TriageTests(unittest.TestCase):
+    def test_local_review_can_update_the_queue_without_claiming_acceptance(self):
+        items = [{"number": 950, "stage": "small-fix-candidate", "engineering_review_complete": False}]
+        apply_review_overrides(items, {"950": {"stage": "implemented-awaiting-review"}})
+        self.assertEqual(items[0]["stage"], "implemented-awaiting-review")
+        self.assertFalse(items[0]["engineering_review_complete"])
+
+    def test_review_overrides_cannot_replace_source_identity_or_acceptance(self):
+        for key in ["source_url", "kata_ref", "engineering_review_complete"]:
+            with self.assertRaises(RuntimeError):
+                apply_review_overrides([{"number": 1}], {"1": {key: True}})
+
     def test_review_findings_override_small_diff_assumptions(self):
         self.assertEqual(triage(record(number=949))[0], "review-findings")
 

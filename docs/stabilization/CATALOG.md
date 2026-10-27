@@ -4,7 +4,7 @@ Captured 2026-10-27T15:10:47.120309+00:00 from https://github.com/mixelpixx/Konn
 
 201 open issues, 63 open PRs; 296 discussion/review entries imported into Kata.
 
-Every item has a preliminary queue and rationale. This is not a claim that every bug has been reproduced or every PR reviewed. Upstream assignments and approvals are not inherited.
+Every item has a preliminary queue and rationale, updated by documented local screening in `review-overrides.json`. This is not a claim that every bug has been reproduced or every PR reviewed. Upstream assignments and approvals are not inherited. See `REVIEW_NOTES.md` for the first implementation batch and its remaining validation gates.
 
 See `catalog.json` for per-item rationale, references, author, original labels, Kata identity, and PR head SHA. The compressed JSON snapshot preserves full bodies, discussions, PR reviews, files/diffs, and commit metadata.
 
@@ -12,16 +12,19 @@ See `catalog.json` for per-item rationale, references, author, original labels, 
 
 | Queue | Items |
 |---|---:|
+| baseline-test-blocker | 1 |
 | dependency-review | 6 |
 | design-backlog | 55 |
 | documentation-review | 3 |
 | historical-context | 1 |
 | historical-decision-review | 3 |
+| implemented-awaiting-review | 1 |
+| implemented-validation-blocked | 1 |
 | needs-reproduction | 104 |
 | pr-review | 55 |
 | review-findings | 4 |
 | safety-review | 17 |
-| small-fix-candidate | 5 |
+| small-fix-candidate | 2 |
 | tracker | 11 |
 
 ## Complete list
@@ -102,7 +105,7 @@ See `catalog.json` for per-item rationale, references, author, original labels, 
 | [#693](https://github.com/mixelpixx/Konnect/pull/693) | pr | fix(schematic): keep every child KiCad writes on a text element | [konnect-maintained#pdps](https://kata.bertramdesigns.com/kata?issue=01M5YYNKFRP2Q6ZM9YYHWWPDPS#direct=1) | review-findings |
 | [#694](https://github.com/mixelpixx/Konnect/pull/694) | pr | fix(schematic): write symbol attributes in KiCad's canonical form | [konnect-maintained#4nj5](https://kata.bertramdesigns.com/kata?issue=01M5YYNKFWW6DX5T1AMZQC4NJ5#direct=1) | review-findings |
 | [#696](https://github.com/mixelpixx/Konnect/issues/696) | issue | get_board_info reads paper size from the file even when KiCad serves the board | [konnect-maintained#x6ny](https://kata.bertramdesigns.com/kata?issue=01M5YYNKFZJ91PDN3HXJ1VX6NY#direct=1) | design-backlog |
-| [#711](https://github.com/mixelpixx/Konnect/issues/711) | issue | macOS: a listener that closes mid-negotiation is reported as transport_error (ENOTCONN), flaking unreachable_reasons | [konnect-maintained#kjwe](https://kata.bertramdesigns.com/kata?issue=01M5YYNKG1D6KQ76TT7YE9KJWE#direct=1) | needs-reproduction |
+| [#711](https://github.com/mixelpixx/Konnect/issues/711) | issue | macOS: a listener that closes mid-negotiation is reported as transport_error (ENOTCONN), flaking unreachable_reasons | [konnect-maintained#kjwe](https://kata.bertramdesigns.com/kata?issue=01M5YYNKG1D6KQ76TT7YE9KJWE#direct=1) | baseline-test-blocker |
 | [#714](https://github.com/mixelpixx/Konnect/issues/714) | issue | Set the title block on schematic sheets and the board (title, date, revision, company, comments 1–9) | [konnect-maintained#smnr](https://kata.bertramdesigns.com/kata?issue=01M5YYNKG38MPP0CB3Q0V9SMNR#direct=1) | design-backlog |
 | [#715](https://github.com/mixelpixx/Konnect/issues/715) | issue | feat(pcb): add a rule area (keep-out) tool | [konnect-maintained#d3tb](https://kata.bertramdesigns.com/kata?issue=01M5YYNKG8P83BE95SZFCFD3TB#direct=1) | design-backlog |
 | [#716](https://github.com/mixelpixx/Konnect/issues/716) | issue | feat(pcb): set the board stack-up (thickness, copper, dielectrics, finish, mask and silkscreen colors) | [konnect-maintained#8rs9](https://kata.bertramdesigns.com/kata?issue=01M5YYNKGB1E3GRAEHPAJP8RS9#direct=1) | design-backlog |
@@ -162,7 +165,7 @@ See `catalog.json` for per-item rationale, references, author, original labels, 
 | [#829](https://github.com/mixelpixx/Konnect/issues/829) | issue | No tool moves a placed footprint's Reference/Value text — move_footprint_text from KiCAD-MCP-Server was not ported | [konnect-maintained#srvp](https://kata.bertramdesigns.com/kata?issue=01M5YYNTTJF4KDEQW3MHZVSRVP#direct=1) | design-backlog |
 | [#830](https://github.com/mixelpixx/Konnect/pull/830) | pr | fix(schematic): report computed coordinates as KiCad places them | [konnect-maintained#7z65](https://kata.bertramdesigns.com/kata?issue=01M5YYNTTN4QY2GVD78HQH7Z65#direct=1) | pr-review |
 | [#831](https://github.com/mixelpixx/Konnect/issues/831) | issue | fix(pcb): flip_component and back-side library refresh don't mirror inner copper layers (In2↔In5 on 8 layers) | [konnect-maintained#17j7](https://kata.bertramdesigns.com/kata?issue=01M5YYNTTR8AVF5505YYP917J7#direct=1) | needs-reproduction |
-| [#834](https://github.com/mixelpixx/Konnect/issues/834) | issue | Freerouting launches show Dock icons on macOS: java started without -Djava.awt.headless=true | [konnect-maintained#c2xd](https://kata.bertramdesigns.com/kata?issue=01M5YYNTTTEJMNP9143KY2C2XD#direct=1) | small-fix-candidate |
+| [#834](https://github.com/mixelpixx/Konnect/issues/834) | issue | Freerouting launches show Dock icons on macOS: java started without -Djava.awt.headless=true | [konnect-maintained#c2xd](https://kata.bertramdesigns.com/kata?issue=01M5YYNTTTEJMNP9143KY2C2XD#direct=1) | implemented-validation-blocked |
 | [#836](https://github.com/mixelpixx/Konnect/issues/836) | issue | update_pcb_from_schematic: updating a footprint drops its groups, points and variants | [konnect-maintained#3bqz](https://kata.bertramdesigns.com/kata?issue=01M5YYNTTVBY8ASM6QMN2P3BQZ#direct=1) | safety-review |
 | [#837](https://github.com/mixelpixx/Konnect/pull/837) | pr | fix(editor): report KiCad 10's schematic editor as unsupported | [konnect-maintained#0kkn](https://kata.bertramdesigns.com/kata?issue=01M5YYNTTZC8PS667KQCPE0KKN#direct=1) | pr-review |
 | [#838](https://github.com/mixelpixx/Konnect/issues/838) | issue | add_board_text writes a caller's float noise into the board file (54.60999999999999) | [konnect-maintained#m0n9](https://kata.bertramdesigns.com/kata?issue=01M5YYNTV14PH1KXEVNVPAM0N9#direct=1) | needs-reproduction |
@@ -197,7 +200,7 @@ See `catalog.json` for per-item rationale, references, author, original labels, 
 | [#867](https://github.com/mixelpixx/Konnect/pull/867) | pr | fix(templates): name symbols and pins that exist in KiCad 10 (#783) | [konnect-maintained#6889](https://kata.bertramdesigns.com/kata?issue=01M5YYNV5DFC2PZ0ME01BH6889#direct=1) | pr-review |
 | [#868](https://github.com/mixelpixx/Konnect/pull/868) | pr | fix(project): refuse a file that changed mid-rename in rename_project | [konnect-maintained#xsz0](https://kata.bertramdesigns.com/kata?issue=01M5YYNV5FG3P7AKR8468XXSZ0#direct=1) | pr-review |
 | [#869](https://github.com/mixelpixx/Konnect/issues/869) | issue | macOS: Start/Stop Server brings the KiCad project manager to the front | [konnect-maintained#8brf](https://kata.bertramdesigns.com/kata?issue=01M5YYNV5K0NZFC08EDJSA8BRF#direct=1) | needs-reproduction |
-| [#870](https://github.com/mixelpixx/Konnect/issues/870) | issue | Codex MCP cannot connect to KiCad when plugin IPC Socket is blank | [konnect-maintained#4545](https://kata.bertramdesigns.com/kata?issue=01M5YYNV5N5XCXBA73JFBA4545#direct=1) | small-fix-candidate |
+| [#870](https://github.com/mixelpixx/Konnect/issues/870) | issue | Codex MCP cannot connect to KiCad when plugin IPC Socket is blank | [konnect-maintained#4545](https://kata.bertramdesigns.com/kata?issue=01M5YYNV5N5XCXBA73JFBA4545#direct=1) | needs-reproduction |
 | [#871](https://github.com/mixelpixx/Konnect/pull/871) | pr | fix(schematic): report each placement's mirror from pin-location tools | [konnect-maintained#9ane](https://kata.bertramdesigns.com/kata?issue=01M5YYNTZVG70MDWE40B5V9ANE#direct=1) | pr-review |
 | [#872](https://github.com/mixelpixx/Konnect/pull/872) | pr | fix(ipc): normalize blank configured IPC address and clarify KiCad 10 preferences path | [konnect-maintained#qape](https://kata.bertramdesigns.com/kata?issue=01M5YYNTZZPB6TFYWCVBQRQAPE#direct=1) | pr-review |
 | [#873](https://github.com/mixelpixx/Konnect/pull/873) | pr | fix(plugin): preserve PCB editor focus on macOS server actions | [konnect-maintained#d6gn](https://kata.bertramdesigns.com/kata?issue=01M5YYNV011Y20K992Z7QKD6GN#direct=1) | pr-review |
@@ -268,7 +271,7 @@ See `catalog.json` for per-item rationale, references, author, original labels, 
 | [#947](https://github.com/mixelpixx/Konnect/issues/947) | issue | Contributor sign-off, and Konnect's move to Konnect-EDA | [konnect-maintained#148k](https://kata.bertramdesigns.com/kata?issue=01M5YYP0AQYXMACJ1HGJ96148K#direct=1) | historical-context |
 | [#948](https://github.com/mixelpixx/Konnect/pull/948) | pr | feat(library): let create_symbol hide individual pins | [konnect-maintained#692m](https://kata.bertramdesigns.com/kata?issue=01M5YYP0AVQ2S52SF25CPY692M#direct=1) | pr-review |
 | [#949](https://github.com/mixelpixx/Konnect/pull/949) | pr | fix(library): find symbols to delete in KiCad-saved libraries | [konnect-maintained#85bz](https://kata.bertramdesigns.com/kata?issue=01M5YYP0AXCEMKM20MR10J85BZ#direct=1) | review-findings |
-| [#950](https://github.com/mixelpixx/Konnect/issues/950) | issue | connect_to_net with stub_length 0 writes a zero-length wire | [konnect-maintained#eczm](https://kata.bertramdesigns.com/kata?issue=01M5YYP0EJNG8YM3WR7VHRECZM#direct=1) | small-fix-candidate |
+| [#950](https://github.com/mixelpixx/Konnect/issues/950) | issue | connect_to_net with stub_length 0 writes a zero-length wire | [konnect-maintained#eczm](https://kata.bertramdesigns.com/kata?issue=01M5YYP0EJNG8YM3WR7VHRECZM#direct=1) | implemented-awaiting-review |
 | [#951](https://github.com/mixelpixx/Konnect/issues/951) | issue | score_placement hard-fails edge-mounted parts (castellated, flush USB-C), and connector_edges measures from the bbox centre | [konnect-maintained#wzb4](https://kata.bertramdesigns.com/kata?issue=01M5YYP0ENB3T6PW2VGX4PWZB4#direct=1) | needs-reproduction |
 | [#952](https://github.com/mixelpixx/Konnect/issues/952) | issue | run_drc: no per-rule count in the summary | [konnect-maintained#k2w3](https://kata.bertramdesigns.com/kata?issue=01M5YYP0EQ162HV0JD0GMHK2W3#direct=1) | needs-reproduction |
 | [#953](https://github.com/mixelpixx/Konnect/issues/953) | issue | No tool renames a placed net label in place | [konnect-maintained#vmxn](https://kata.bertramdesigns.com/kata?issue=01M5YYP0ER4TNKX27K6NTSVMXN#direct=1) | design-backlog |
