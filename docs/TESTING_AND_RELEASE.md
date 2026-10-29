@@ -73,25 +73,22 @@ test passes only when the exact pre-import IPC snapshot returns.
 
 ## CI And Live Validation
 
-`.github/workflows/ci.yml` covers the Rust workspace, formatting, clippy,
-documentation tests, viewer, plugin, Nix, and PCM validation. The real-KiCad
-workflow remains separate because it installs KiCad and is not an ordinary
-per-PR gate. Apply the `run:e2e-kicad` label to run that same workflow for a
-pull request when KiCad-facing behavior needs hosted acceptance evidence.
+`.github/workflows/ci.yml` defines one Linux `Core checks` job for workspace
+unit/integration tests, formatting, Clippy, doctests, Python plugin tests,
+script tests when present, and dependency-license checks. It does not validate
+the separate viewer, distribution packages, or other operating systems.
 
-Before creating a release tag, dispatch `.github/workflows/release.yml` against
-the exact candidate ref. The manual entry point runs the release-profile target
-matrix, all three PCM package builds, and the reusable real-KiCad acceptance
-workflow with a synthetic `0.0.0` package version. Its publication job is
-tag-only, so this pre-tag smoke run cannot create a GitHub release.
+The Windows/KiCad 10.0.5 workflow is manual or explicitly reusable only, not
+scheduled or label-triggered. Run it deliberately when KiCad-facing behavior
+needs hosted acceptance evidence. See
+[GOVERNANCE.md](../GOVERNANCE.md#activation-and-branch-protection) for pending
+Actions activation and required-check enforcement.
 
-On a release tag, `.github/workflows/release.yml` calls
-`.github/workflows/e2e-kicad.yml` as a reusable workflow. The called workflow
-checks out the caller's exact tag commit. The `Create Release` job depends on
-that acceptance job and both artifact-building jobs, so failed real-KiCad
-acceptance leaves the diagnostic build artifacts in the workflow run but cannot
-create a GitHub release or upload a partial release asset set. Weekly and manual
-real-KiCad runs continue to use the standalone workflow entry points.
+Automated publication is disabled. The inherited release graph is retained at
+`.github/disabled-workflows/release.yml` as a reference, including its mandatory
+real-KiCad acceptance gate. It is not an executable workflow or an approved
+release recipe. Agree a separate release procedure before distributing packages;
+neither a merge nor a tag authorizes publication.
 
 In the PR description, list every command run and explicitly name checks skipped
 because they require KiCad, another operating system, credentials, or release
