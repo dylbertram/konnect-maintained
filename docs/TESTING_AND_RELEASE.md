@@ -78,16 +78,14 @@ unit/integration tests, formatting, Clippy, doctests, Python plugin tests,
 script tests when present, and dependency-license checks. It does not validate
 the separate viewer, distribution packages, or other operating systems.
 
-The Windows/KiCad 10.0.5 workflow is manual or explicitly reusable only, not
+The Windows/KiCad 10.0.5 workflow is manual only, not
 scheduled or label-triggered. Run it deliberately when KiCad-facing behavior
 needs hosted acceptance evidence. See
 [GOVERNANCE.md](../GOVERNANCE.md#activation-and-branch-protection) for pending
 Actions activation and required-check enforcement.
 
-Automated publication is disabled. The inherited release graph is retained at
-`.github/disabled-workflows/release.yml` as a reference, including its mandatory
-real-KiCad acceptance gate. It is not an executable workflow or an approved
-release recipe. Agree a separate release procedure before distributing packages;
+Automated publication is disabled and the inherited release workflow has been
+removed. Agree a separate release procedure before distributing packages;
 neither a merge nor a tag authorizes publication.
 
 In the PR description, list every command run and explicitly name checks skipped

@@ -6,13 +6,12 @@ name: E2E (real KiCAD)
 #   - the conformance suite round-trips every schematic in KiCAD's demo corpus
 #   - the PCM package is assembled and schema-validated
 #
-# Manual only, or explicitly called by another reviewed workflow. Installing
+# Manual only. Installing
 # KiCAD costs several minutes. This is not an ordinary required check or a
-# supported-platform certification. Release automation is archived and inactive.
+# supported-platform certification. Release automation has been removed.
 
 on:
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
