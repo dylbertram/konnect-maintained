@@ -1,4 +1,4 @@
-//! Guard the small active workflow set and the archived release acceptance edges.
+//! Guard the small active workflow set.
 //! Publication must stay inactive until a separate release-policy review.
 
 use std::path::{Path, PathBuf};
@@ -18,70 +18,9 @@ fn workflow(name: &str) -> serde_json::Value {
         .unwrap_or_else(|error| panic!("failed to parse {name} as YAML: {error}"))
 }
 
-fn archived_release() -> serde_json::Value {
-    workflow("../disabled-workflows/release.yml")
-}
-
-#[test]
-fn archived_release_preserves_real_kicad_acceptance() {
-    let release = archived_release();
-
-    assert_eq!(
-        release["jobs"]["real-kicad-acceptance"]["uses"], "./.github/workflows/e2e-kicad.yml",
-        "release.yml must call the real-KiCad acceptance workflow"
-    );
-    assert_eq!(
-        release["jobs"]["release"]["needs"],
-        serde_json::json!(["real-kicad-acceptance", "build", "pcm-package"]),
-        "the release publication job must require real-KiCad acceptance and both artifact jobs"
-    );
-}
-
-#[test]
-fn release_workflow_has_a_non_publishing_pre_tag_entry_point() {
-    let release = archived_release();
-
-    assert!(
-        release["on"].get("workflow_dispatch").is_some(),
-        "maintainers need to exercise the release graph before creating a tag"
-    );
-    assert_eq!(
-        release["jobs"]["release"]["if"],
-        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
-        "a manual release smoke run must never publish a GitHub release"
-    );
-}
-
-#[test]
-fn release_pcm_validation_uses_the_effective_release_version() {
-    let release = archived_release();
-    let validation = release["jobs"]["pcm-package"]["steps"]
-        .as_array()
-        .expect("PCM package steps must be an array")
-        .iter()
-        .find(|step| step["name"] == "Validate PCM package against KiCAD schema (release gate)")
-        .expect("release workflow must validate PCM packages");
-    let script = validation["run"]
-        .as_str()
-        .expect("PCM validation step must have a shell script");
-
-    assert!(
-        script.contains("version=\"${RELEASE_VERSION#v}\""),
-        "PCM validation must use the effective version shared by tag and dry-run builds"
-    );
-    assert!(
-        !script.contains("GITHUB_REF_NAME"),
-        "a workflow_dispatch run uses the main branch ref, not the synthetic package version"
-    );
-}
-
 #[test]
 fn workflows_do_not_depend_on_node20_setup_protoc() {
-    for name in [
-        "ci.yml",
-        "e2e-kicad.yml",
-        "../disabled-workflows/release.yml",
-    ] {
+    for name in ["ci.yml", "e2e-kicad.yml"] {
         let source =
             std::fs::read_to_string(repository_root().join(".github/workflows").join(name))
                 .unwrap_or_else(|error| panic!("failed to read {name}: {error}"));
@@ -98,18 +37,14 @@ fn workflows_do_not_depend_on_node20_setup_protoc() {
 }
 
 #[test]
-fn real_kicad_workflow_is_manual_or_explicitly_reused_only() {
+fn real_kicad_workflow_is_manual_only() {
     let e2e = workflow("e2e-kicad.yml");
 
     let triggers = &e2e["on"];
-    assert!(
-        triggers.get("workflow_call").is_some(),
-        "retain reusable acceptance for a future reviewed release process"
-    );
     assert_eq!(
         triggers.as_object().unwrap().len(),
-        2,
-        "E2E must have only manual and reusable entry points, never scheduled/PR runs"
+        1,
+        "E2E must have only a manual entry point, never scheduled/PR runs"
     );
     assert!(
         triggers.get("workflow_dispatch").is_some(),

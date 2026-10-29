@@ -33,7 +33,7 @@ and cancellation of superseded runs. No ordinary CI artifacts are uploaded.
 
 This deliberately does not certify Windows, macOS, the separate viewer,
 or distribution packages. Changes affecting those paths need targeted evidence.
-The existing Windows/KiCad 10.0.5 E2E workflow is manual or explicitly reusable,
+The existing Windows/KiCad 10.0.5 E2E workflow is manual only,
 has a 60-minute limit, and retains failure artifacts for seven days. It neither
 runs weekly nor responds to PR labels. Its version pin is not a new support claim.
 
@@ -75,17 +75,14 @@ unrelated refactors or speculative compatibility work to a narrow fix.
 
 ## Releases
 
-Automated publication is disabled. The inherited release workflow is retained at
-`.github/disabled-workflows/release.yml`, outside GitHub's executable workflow
-directory. Pushing a tag must not publish from the active workflow set.
-Its build, packaging, and mandatory real-KiCad acceptance checks remain a reference,
-not an approved release process.
+Automated publication is disabled. The inherited release workflow has been
+removed, not parked as inactive configuration. Pushing a tag must not publish
+from the active workflow set.
 
 Before distribution, agree a separate release procedure covering the exact tested
 commit, version, package identity and source/license information, affected-platform
-acceptance, and signing/provenance needs. Do not restore the archived workflow
-unchanged. No package identity, copyright, license, or contributor-license terms
-are changed by this maintenance-policy cleanup.
+acceptance, and signing/provenance needs. No package identity, copyright, license,
+or contributor-license terms are changed by this maintenance-policy cleanup.
 
 PR #7 records the October 27 audit. It remains historical evidence, not a mandate
 to recreate upstream's infrastructure or proof that its follow-up work is finished.

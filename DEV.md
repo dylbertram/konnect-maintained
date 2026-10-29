@@ -149,12 +149,11 @@ Konnect/
     ├── ci.yml                        # One Linux Core checks job: format, Clippy,
     │                                 # workspace tests/doctests, Python tests,
     │                                 # and dependency-license checks.
-    └── e2e-kicad.yml                  # Manual/reusable Windows KiCad 10.0.5 E2E,
+    └── e2e-kicad.yml                  # Manual Windows KiCad 10.0.5 E2E,
                                       # conformance, and PCM validation. No schedule.
 ```
 
-The inherited release workflow is archived at
-`.github/disabled-workflows/release.yml` and cannot publish from there.
+The inherited release workflow has been removed. Automated publication is disabled.
 See [GOVERNANCE.md](GOVERNANCE.md#activation-and-branch-protection) for pending
 CI activation and branch-protection steps.
 
