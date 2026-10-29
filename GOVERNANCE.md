@@ -31,7 +31,7 @@ doctests, Python plugin tests, script tests when present, and dependency-license
 checks. It uses a read-only token, pinned external actions, a 45-minute limit,
 and cancellation of superseded runs. No ordinary CI artifacts are uploaded.
 
-This deliberately does not certify Windows, macOS, the separate viewer, Nix,
+This deliberately does not certify Windows, macOS, the separate viewer,
 or distribution packages. Changes affecting those paths need targeted evidence.
 The existing Windows/KiCad 10.0.5 E2E workflow is manual or explicitly reusable,
 has a 60-minute limit, and retains failure artifacts for seven days. It neither

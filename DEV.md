@@ -39,27 +39,6 @@ Schematic-viewer build notes (Windows):
 - Close any running viewer window before rebuilding — Windows locks a running
   `.exe`, so the link step fails while the app is open.
 
-### Nix
-
-A `flake.nix` provides a reproducible build and dev shell on Linux
-(`x86_64`/`aarch64`), contributed in #198:
-
-```bash
-nix build .#konnect   # build the server binary
-nix run  .#konnect    # build and run it
-nix develop           # shell with the pinned toolchain, protoc, kicad-small
-```
-
-The flake pins its own toolchain from `rust-toolchain.toml` and reads the
-version from the workspace `Cargo.toml`, so those stay in step automatically.
-What it does *not* track automatically is the build itself: `cargoBuildFlags`
-names `-p konnect --bin konnect`, and `preCheck` exports `KONNECT_STATE_DIR`
-for the tests that need a writable state dir. **Renaming the binary, adding a
-workspace member the server depends on, or introducing a test that needs
-another environment variable will break the Nix build without breaking any
-other job** — the `Nix flake` CI job exists to catch exactly that, so treat a
-failure there as a real break rather than a Nix-user problem.
-
 ## Architecture
 
 ```
@@ -167,20 +146,17 @@ Konnect/
 │   └── resources/                    # PCM package resources (icon.png)
 │
 └── .github/workflows/
-    ├── ci.yml                        # 7 jobs: check+test (3-OS matrix), clippy and
-    │                                 # fmt (ubuntu only), schematic viewer, Python
-    │                                 # plugin, Nix flake, PCM packaging validation.
-    │                                 # The last four cover code `cargo --workspace`
-    │                                 # never sees. 9 check runs per PR — the matrix
-    │                                 # counts as three.
-    ├── e2e-kicad.yml                 # Real KiCAD 10.0.5: end-to-end suite, a
-    │                                 # conformance pass over KiCAD's demo corpus, and
-    │                                 # PCM assembly + schema validation. Weekly cron,
-    │                                 # manual dispatch, reusable release gate, and an
-    │                                 # opt-in label-triggered PR run.
-    └── release.yml                   # Real-KiCad gate, build (4 targets), PCM package
-                                      # (3 platforms, macOS universal via lipo), release
+    ├── ci.yml                        # One Linux Core checks job: format, Clippy,
+    │                                 # workspace tests/doctests, Python tests,
+    │                                 # and dependency-license checks.
+    └── e2e-kicad.yml                  # Manual/reusable Windows KiCad 10.0.5 E2E,
+                                      # conformance, and PCM validation. No schedule.
 ```
+
+The inherited release workflow is archived at
+`.github/disabled-workflows/release.yml` and cannot publish from there.
+See [GOVERNANCE.md](GOVERNANCE.md#activation-and-branch-protection) for pending
+CI activation and branch-protection steps.
 
 ## KiCAD 10 Integration
 
