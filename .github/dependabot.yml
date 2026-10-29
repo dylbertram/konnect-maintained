@@ -1,5 +1,5 @@
 # Weekly dependency update PRs. Cargo updates respect the committed
-# Cargo.lock; actions updates keep the SHA pins in release.yml current.
+# Cargo.lock; actions updates keep active workflow SHA pins current.
 version: 2
 updates:
   - package-ecosystem: cargo
