@@ -2235,6 +2235,16 @@ async fn run_java_command(
     }
 }
 
+fn freerouting_version_command(jar: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("java");
+    command
+        .arg("-Djava.awt.headless=true")
+        .arg("-jar")
+        .arg(jar)
+        .arg("--version");
+    command
+}
+
 async fn handle_check_freerouting(
     args: &serde_json::Value,
     _ctx: &ToolContext,
@@ -2288,8 +2298,7 @@ async fn handle_check_freerouting(
                 })));
             }
 
-            let mut freerouting_command = tokio::process::Command::new("java");
-            freerouting_command.args(["-jar", jar_path.to_str().unwrap_or(""), "--version"]);
+            let mut freerouting_command = freerouting_version_command(&jar_path);
             let freerouting = run_java_command(&mut freerouting_command).await;
             let (version_checked, version_output) = match freerouting {
                 Ok(output) => (output.status.success(), command_output(&output)),
@@ -2393,6 +2402,26 @@ mod freerouting_tests {
     use crate::router::ToolRouter;
     use crate::tools::ServerConfig;
     use std::sync::Arc;
+
+    #[test]
+    fn headless_freerouting_version_option_precedes_the_jar() {
+        let jar = Path::new("directory with spaces/freerouting.jar");
+        let command = freerouting_version_command(jar);
+        let args: Vec<_> = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "-Djava.awt.headless=true",
+                "-jar",
+                jar.to_str().unwrap(),
+                "--version"
+            ]
+        );
+    }
 
     fn test_ctx() -> ToolContext {
         ToolContext::new(
