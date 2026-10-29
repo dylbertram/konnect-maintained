@@ -4,8 +4,8 @@ Thanks for your interest! Bug reports, feature requests, and pull requests are w
 
 ## Before you start
 
-- Read [GOVERNANCE.md](GOVERNANCE.md) — who maintains what, how work is claimed,
-  and what has to be true before a change lands.
+- Read [GOVERNANCE.md](GOVERNANCE.md) for the maintained repository's solo-maintainer
+  policy, CI activation status, and merge expectations.
 - Check [ROADMAP.md](ROADMAP.md) — your idea may already be planned (or intentionally
   out of scope).
 - For anything non-trivial, open an issue first so we can agree on the approach before
@@ -13,16 +13,8 @@ Thanks for your interest! Bug reports, feature requests, and pull requests are w
 - Keep each pull request focused on one reviewable outcome. Split unrelated platform,
   protocol, feature, and documentation changes into a short PR series.
 - Follow the [branch and pull request workflow](docs/BRANCH_AND_PULL_REQUEST_WORKFLOW.md).
-  Independent changes branch from current `upstream/main`; dependent work exposes one
-  mergeable step at a time instead of opening cumulative PRs against the same old base.
-- For a pull request from a fork, leave **Allow edits by maintainers** enabled for the
-  PR branch. This lets a maintainer perform the one clean rebase needed when the PR
-  reaches the front of the queue and resolve mechanical conflicts caused by intervening
-  `main` changes. Ambiguous semantic conflicts and substantive changes still return to
-  the author. If maintainer edits cannot be enabled, the author owns that refresh.
-- Keep the PR's workflow state honest. A maintainer uses one `status:*` label to name
-  the next actor; `status:ready-to-merge` means the exact current head has completed
-  review, not merely that the author considers it finished.
+  Branch from current maintained `main`, not the archive or a release tag. Labels
+  are context, not automatic approval, merge authorization, or closure timers.
 - Read [docs/NAMING_CONVENTIONS.md](docs/NAMING_CONVENTIONS.md) before adding public
   tools, schema fields, CLI options, environment variables, or user-facing terms.
 
@@ -30,13 +22,13 @@ Thanks for your interest! Bug reports, feature requests, and pull requests are w
 
 The PR base and dependency structure are part of the change:
 
-- Branch independent changes separately from current `upstream/main`.
-- Use the latest `upstream/main`, not the latest release tag. Release tags are
+- Branch independent changes separately from current maintained `main`.
+- Use the latest maintained `main`, not the latest release tag. Release tags are
   consumption points, not contribution bases, unless a maintainer explicitly
   requests a backport.
 - If PR B genuinely depends on PR A, document the complete order, keep only A ready,
   and retain B in the contributor's fork until A merges. Then rebuild B on current
-  `upstream/main` with only B's unique commits and rerun CI.
+  maintained `main` with only B's unique commits and rerun relevant tests.
 - Do not open several cumulative PRs against `main` from branches that all contain the
   same unmerged prerequisite commits. Green checks on those old cumulative heads do
   not establish merge readiness after `main` changes.
@@ -46,8 +38,7 @@ The PR base and dependency structure are part of the change:
 - Resolve conflicts in the topic branch before final review. When rewriting a published
   branch, use `--force-with-lease`, never plain `--force`.
 
-The linked workflow includes exact commands, fork limitations, restacking examples,
-merge-readiness criteria, and integration-branch ownership and cleanup rules.
+The linked workflow describes review, dependency updates, and explicit merge decisions.
 
 ## Development setup
 
@@ -111,58 +102,24 @@ The description should state:
 
 ## From review to merge
 
-Konnect currently runs in a personal GitHub repository. Collaborators have Write
-access rather than organization-style Maintain/Admin roles. Maintainers can triage,
-review, merge, and arm auto-merge, but only the owner can change repository settings.
-GitHub's native merge queue is not available in this ownership model, so the documented
-landing order and `status:*` labels are the queue.
+@dylbertram is the sole maintainer and makes merge decisions after reviewing the
+current diff and evidence. No second-person or code-owner approval is required.
+Upstream authors have no standing merge authorization here. Agents need explicit
+authorization to merge, and auto-merge is not used.
 
-The repository requires a pull request, all ten hosted checks, resolved review
-conversations, an up-to-date branch, and the merge-commit method. GitHub enforces that
-the branch includes current `main`. When a reviewed PR reaches the front of the queue
-and is merely behind, a maintainer may update it with rebase and let hosted CI rerun;
-the maintainer may also resolve a mechanical conflict that preserves the unique change.
-The contributor is needed for ambiguous conflicts, copied prerequisite history, failed
-checks or substantive changes. Once a maintainer has reviewed the refreshed exact head and marked
-it `status:ready-to-merge`, they may enable auto-merge while checks are finishing.
-Auto-merge is the last execution step; it is not review and does not make a cumulative
-or poorly evidenced PR ready.
+The initial CI gate is one Linux job, `Core checks`. Actions activation and actual
+branch-protection enforcement remain pending until the reviewed workflow has run
+successfully. See [the activation steps](GOVERNANCE.md#activation-and-branch-protection).
+Do not claim unavailable hosted checks passed.
 
-PRs authored by `@mixelpixx` or `@neusse` have standing merge authorization after
-the exact current head satisfies the same review, CI, closure, and queue gates. The
-queue maintainer continues through consecutive ready PRs by either maintainer, but
-stops before the first next-to-land PR by another author for explicit authorization
-of that exact head. This changes waiting time, not the readiness standard or landing
-order.
+Resolve substantive findings and conflicts before merging. A new commit or base
+change needs updated review and relevant evidence. Use merge commits to preserve
+individual commit attribution. Dependent work waits for its prerequisite.
 
-A substantive review finding stops the PR regardless of who authored it. The
-maintainer records the complete finding, applies `status:waiting-on-author`, and
-leaves auto-merge off. Standing authorization applies only after the author resolves
-the finding and the new exact head receives a no-findings review with all ten required
-checks green. Reviewers do not silently repair another maintainer's PR and merge it in
-the same pass unless they were explicitly asked to take over that specific finding.
-
-CODEOWNERS may automatically request Chris's review even when another maintainer
-handles the routine review. That request is a notification, not an extra approval
-gate. The [review-request workflow](docs/BRANCH_AND_PULL_REQUEST_WORKFLOW.md#review-requests-and-completion)
-explains how the maintainer records a completed review and clears only a stale
-automatic request; it never dismisses a specific owner decision or review finding.
-
-If you push after that review, assume the readiness decision is invalid. GitHub may
-disable auto-merge automatically for a new commit from a fork. Resolve new feedback
-and wait for review of the new head. If only `main` moved after review, wait until the
-PR reaches the front of the queue: a maintainer can perform a clean update then. After
-merge, GitHub deletes the topic branch automatically; retain any later dependent work
-on its own branch.
-
-You do not need personal access to every supported operating system, KiCad
-version, or hardware configuration. For an environment-dependent check you
-cannot run, name the missing environment, provide the deterministic and hosted
-CI evidence you can, and identify any original reporter or community tester who
-may be able to validate it. Maintainers apply the risk-proportionate validation
-rule in [GOVERNANCE.md](GOVERNANCE.md); an unavailable secondary observation is
-not automatically a blocked pull request, but required CI and material safety
-evidence remain mandatory.
+You do not need personal access to every platform. Name unavailable checks and
+provide relevant deterministic tests. Missing evidence of core behavior, data
+safety, or security remains a blocker; a missing secondary-platform observation
+is not automatically one. CI is not certification of all platforms or packages.
 
 Treat MCP tools, schema fields, CLI flags, environment variables, config keys, and
 documented paths as public API. Preserve compatibility or provide an explicit
@@ -171,16 +128,18 @@ output, and unrelated cleanup out of the diff.
 
 ## Pull request checklist
 
-These are exactly the commands CI runs — if they pass locally, CI should be green:
+The core Rust commands used by CI are:
 
 - `cargo test --workspace --locked --lib --tests` passes
 - `cargo test --workspace --locked --doc` passes
 - `cargo clippy --workspace --locked --all-targets -- -D warnings` is clean
 - `cargo fmt --all -- --check` is clean
-- The branch includes current `upstream/main`, GitHub reports no conflicts, and the
-  required checks passed on the exact head being reviewed
+- `python3 -m unittest discover -s plugin/tests -v` passes; run script tests too
+  when `scripts/tests` exists. CI also retains the dependency-license check.
+- The branch is based on current maintained `main`, GitHub reports no conflicts,
+  and check results correspond to the code being reviewed
 - Every review conversation is resolved; a post-review commit or base refresh requires
-  review of the new exact head before auto-merge is armed again. An unchanged unique
+  review of the new exact head before a merge decision. An unchanged unique
   diff may receive a focused refresh review; changed behavior requires substantive
   re-review
 - The commit list and diff contain only this PR's unique work; dependencies and stack

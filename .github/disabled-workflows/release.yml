@@ -1,3 +1,5 @@
+# Archived, not executable by GitHub Actions from this directory.
+# Restoration requires a separate release-policy review. See GOVERNANCE.md.
 name: Release
 
 on:
