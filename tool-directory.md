@@ -94,9 +94,9 @@ and Windows servers do not.
 |------|-------------|
 | `add_schematic_component` | Add a symbol from a KiCAD library to the schematic. Snaps to the 1.27mm grid, copies the library Value and Footprint unless explicitly overridden, preserves every saved hierarchy instance, and reports committed-file readback. Refuses stale instance metadata before writing. |
 | `delete_schematic_component` | Remove a component and all of its placed units by reference designator. |
-| `edit_schematic_component` | Update shared fields consistently across every placed unit of a component, and move or hide any field's text. |
-| `get_schematic_component` | Get shared properties and every placed unit's position for a component. |
-| `list_schematic_components` | List all symbol instances with positions, values, footprints, and properties. |
+| `edit_schematic_component` | Update shared fields or native `dnp` across every placed unit; read back the saved state. Custom `DNP` fields are not the native flag and are refused. |
+| `get_schematic_component` | Get shared properties, native DNP and every placed unit's position and DNP state. |
+| `list_schematic_components` | List symbol instances with positions, values, footprints, properties, and native DNP. |
 | `move_schematic_component` | Move the lowest-numbered unit to a new position and translate every other unit by the same delta. Does NOT adjust connected wires. Junction dots are re-judged, and a no-connect flag travels with the pin it protects. |
 | `rotate_schematic_component` | Set the lowest-numbered unit's absolute rotation and rotate every other unit by the same delta. Does NOT adjust connected wires; junction dots are re-judged where the pins turned, and a no-connect flag travels with the pin it protects. |
 | `move_connected` | Move a symbol and stretch/shrink connected wire stubs to preserve connections. |
@@ -180,7 +180,7 @@ and Windows servers do not.
 | `batch_connect_to_net` | Connect many pins to a named net by adding labels at each endpoint, oriented away from the symbol body. `stub_length`, `direction` and `label_type` give `connect_to_net`'s stub and label for every pin in the call. Single read → all edits → single write. |
 | `batch_delete` | Delete multiple schematic items (wires, labels, junctions, components) by UUID or reference — single file write. |
 | `bulk_move_schematic_components` | Move multiple components by a uniform dx/dy offset in a single atomic write. Junction dots are re-judged, and a no-connect flag travels with the pin it protects. |
-| `batch_edit_schematic_components` | Update fields on multiple schematic components in one atomic write. Set `create_missing: true` to create missing custom fields on every placed unit; built-in fields remain update-only. Per-field `updated_units` and `created_units` report what happened. |
+| `batch_edit_schematic_components` | Update fields or native boolean `dnp` on multiple components in one atomic write. Omit `dnp` to preserve it; inspect saved per-unit readback. Set `create_missing: true` for missing custom fields; built-ins remain update-only. Custom `DNP` fields are refused. |
 | `batch_delete_schematic_components` | Delete multiple components by reference designator in a single atomic write. |
 | `connect_passthrough` | Add a wire stub and matching net label at a point to route a signal through a region without drawing a full path. Direction defaults to `auto`. |
 | `add_schematic_text` | Add a text annotation (non-net label) to the schematic at a given position. Aligns the text against that position with `justify`, per axis and defaulting to `left bottom` as KiCad does; an omitted axis is centred, and `center` centres both. Takes `bold`, `italic`, `thickness` and `color` for the font. |
