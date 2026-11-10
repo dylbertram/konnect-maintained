@@ -168,6 +168,91 @@ fn body(result: &CallToolResult) -> Value {
 }
 
 #[tokio::test]
+async fn project_top_level_uuid_placement_accepts_gui_paths_and_refuses_header_paths() {
+    const PROJECT: &str = "b17a773a-65cc-45fc-a3bd-749216d1b68c";
+    const HEADER: &str = "5b9623a5-6d01-41fc-9865-e1bc779418c8";
+    let expected = [
+        PATH_A.replace(HEADER, PROJECT),
+        PATH_B.replace(HEADER, PROJECT),
+    ];
+    for name in PLACERS {
+        for gui_paths in [true, false] {
+            let (_directory, root, child) = fixture(true);
+            let project_file = root.with_extension("kicad_pro");
+            let mut project: Value =
+                serde_json::from_slice(&std::fs::read(&project_file).unwrap()).unwrap();
+            project["schematic"]["top_level_sheets"] = json!([{
+                "filename": "complex_hierarchy.kicad_sch", "uuid": PROJECT
+            }]);
+            std::fs::write(&project_file, serde_json::to_vec(&project).unwrap()).unwrap();
+            if gui_paths {
+                let mut schematic = Schematic::load(&child).unwrap();
+                for symbol in schematic.symbols.iter_mut() {
+                    let project = symbol
+                        .raw_sub_nodes
+                        .iter_mut()
+                        .find(|node| node.tag() == Some("instances"))
+                        .unwrap()
+                        .find_mut("project")
+                        .unwrap();
+                    let SexpNode::List(nodes) = project else {
+                        unreachable!()
+                    };
+                    for node in nodes {
+                        if node.tag() == Some("path") {
+                            let path = node.value().unwrap().replace(HEADER, PROJECT);
+                            let SexpNode::List(fields) = node else {
+                                unreachable!()
+                            };
+                            fields[1] = SexpNode::Str(path);
+                        }
+                    }
+                }
+                schematic.overwrite().unwrap();
+            }
+            let root_before = std::fs::read(&root).unwrap();
+            let project_before = std::fs::read(&project_file).unwrap();
+            let child_before = std::fs::read(&child).unwrap();
+            let count_before = Schematic::load(&child).unwrap().symbols.len();
+            let result = place(name, &child).await;
+            if gui_paths {
+                assert!(!result.is_error, "{name}: {result:?}");
+                let committed = Schematic::load(&child).unwrap();
+                assert_eq!(
+                    committed.symbols.len(),
+                    count_before
+                        + if name == "batch_place_components" {
+                            2
+                        } else {
+                            1
+                        }
+                );
+                for symbol in committed.symbols.iter() {
+                    let mut paths = symbol.instance_paths();
+                    paths.sort();
+                    assert_eq!(
+                        paths,
+                        expected
+                            .iter()
+                            .map(|path| ("complex_hierarchy".to_string(), path.clone()))
+                            .collect::<Vec<_>>()
+                    );
+                }
+            } else {
+                assert_eq!(
+                    body(&result)["error"]["kind"],
+                    "stale_target",
+                    "{name}: {result:?}"
+                );
+                assert_eq!(std::fs::read(&child).unwrap(), child_before);
+            }
+            assert_eq!(std::fs::read(&root).unwrap(), root_before);
+            assert_eq!(std::fs::read(&project_file).unwrap(), project_before);
+        }
+    }
+}
+
+#[tokio::test]
 async fn native_placement_preserves_unique_and_reused_paths_with_committed_readback() {
     for reused in [false, true] {
         for name in PLACERS {
