@@ -3256,6 +3256,10 @@ mod multi_unit_handler_tests {
         );
         assert_eq!(created["updated"][0]["fields"][0]["created_units"], 3);
         let committed = std::fs::read_to_string(schematic.path()).unwrap();
+        assert!(
+            committed.lines().all(|line| !line.ends_with([' ', '\t'])),
+            "inserting fields must not introduce trailing whitespace"
+        );
         assert_eq!(
             committed.matches(r#"(property "Tolerance" "1%""#).count(),
             3
@@ -3446,6 +3450,10 @@ mod multi_unit_handler_tests {
         assert_eq!(result["created_unit_copies"], 3);
         let committed = std::fs::read_to_string(schematic.path()).unwrap();
         assert!(!committed.replace("\r\n", "").contains('\n'));
+        assert!(
+            committed.lines().all(|line| !line.ends_with([' ', '\t'])),
+            "CRLF field insertion must not introduce trailing whitespace"
+        );
         assert_eq!(
             committed.matches("\r\n\t\t(property \"Tolerance\"").count(),
             3

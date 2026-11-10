@@ -2342,7 +2342,21 @@ fn property_insert_edit(
         .rfind(')')
         .map(|offset| start + offset)
         .ok_or_else(|| format!("symbol block for '{reference}' is malformed"))?;
-    Ok(SexpEdit::insert(close, prop))
+    // A KiCad-formatted closing parenthesis is usually on its own indented
+    // line. Insert before that indentation, not after it: otherwise the
+    // leading newline in `prop` turns the indentation into trailing whitespace.
+    let line_start = content[..close].rfind('\n').map_or(0, |n| n + 1);
+    if content[line_start..close]
+        .bytes()
+        .all(|byte| matches!(byte, b' ' | b'\t'))
+    {
+        Ok(SexpEdit::insert(
+            line_start,
+            format!("{}{newline}", &prop[newline.len()..]),
+        ))
+    } else {
+        Ok(SexpEdit::insert(close, prop))
+    }
 }
 
 /// Set one shared component property in every placed unit.
