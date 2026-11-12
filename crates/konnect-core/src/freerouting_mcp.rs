@@ -469,9 +469,10 @@ impl LocalMcpClient {
         Ok(client)
     }
 
-    fn spawn(jar: &Path) -> Result<Self> {
+    fn server_command(jar: &Path) -> Command {
         let mut command = Command::new("java");
         command
+            .arg("-Djava.awt.headless=true")
             .arg("-jar")
             .arg(jar)
             .args(server_arguments())
@@ -479,7 +480,11 @@ impl LocalMcpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let mut child = command
+        command
+    }
+
+    fn spawn(jar: &Path) -> Result<Self> {
+        let mut child = Self::server_command(jar)
             .spawn()
             .context("start local Freerouting MCP server")?;
         #[cfg(test)]
@@ -761,6 +766,23 @@ fn compact(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn headless_freerouting_server_option_precedes_the_jar() {
+        let jar = std::path::Path::new("directory with spaces/freerouting.jar");
+        let command = super::LocalMcpClient::server_command(jar);
+        let args: Vec<_> = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        assert_eq!(
+            &args[..3],
+            ["-Djava.awt.headless=true", "-jar", jar.to_str().unwrap()]
+        );
+        assert!(args.contains(&"--mcp_server.stdio=true"));
+        assert!(args.contains(&"--gui.enabled=false"));
+    }
+
     use super::*;
     use konnect_ipc::{IpcEffectiveRoutingRules, IpcRoutingRules};
 
