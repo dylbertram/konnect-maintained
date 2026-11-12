@@ -3,6 +3,16 @@
 Konnect's tool schemas are public API. This file records intentional argument
 removals and the supported replacement workflow.
 
+## Unreleased: native schematic DNP
+
+`edit_schematic_component` and each entry in `batch_edit_schematic_components`
+accept a boolean `dnp`, applied to every placed unit. Omit it to preserve the
+existing flag. The edit response and component get/list tools report the native
+state observed in the saved schematic; inspect each unit when states differ.
+Custom fields named `DNP` are refused because they do not control KiCad's native
+flag. Existing custom properties are not removed. Editing a schematic does not
+automatically synchronize an existing PCB or change every export.
+
 ## Unreleased: a listener that closes mid-negotiation is `handshake_failed` on Unix (patch release)
 
 A dial to a listener that accepts and then closes before NNG's negotiation

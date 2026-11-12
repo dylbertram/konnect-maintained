@@ -2905,6 +2905,7 @@ mod component_properties_dispatch_tests {
     fn r1_row() -> Value {
         json!({
             "reference": "R1",
+            "dnp": false,
             "value": "10k",
             "footprint": "",
             "lib_id": "Device:R",
@@ -2945,6 +2946,7 @@ mod component_properties_dispatch_tests {
         expected["unit_count"] = json!(1);
         expected["units"] = json!([{
             "unit": 1,
+            "dnp": false,
             "x": 101.6,
             "y": 76.2,
             "rotation": 0.0,
@@ -2988,6 +2990,60 @@ mod component_properties_dispatch_tests {
                 }
                 other => panic!("unexpected reference {other:?}: {listed}"),
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn native_dnp_edits_and_refusals_cross_served_dispatch() {
+        let handler = handler().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = schematic(&dir);
+        let edited = call(
+            &handler,
+            "edit_schematic_component",
+            json!({"schematic": path, "reference": "R1", "dnp": true}),
+        )
+        .await;
+        assert_eq!(edited["dnp"], true);
+        let observed = call(
+            &handler,
+            "get_schematic_component",
+            json!({"schematic": path, "reference": "R1"}),
+        )
+        .await;
+        assert_eq!(observed["dnp"], true);
+        let batch = call(
+            &handler,
+            "batch_edit_schematic_components",
+            json!({"schematic": path, "edits": [{"reference": "R1", "dnp": false}]}),
+        )
+        .await;
+        assert_eq!(batch["updated"][0]["dnp"], false);
+        let before = std::fs::read(&path).unwrap();
+        for (name, args) in [
+            (
+                "edit_schematic_component",
+                json!({"schematic": path, "reference": "R1", "dnp": "yes", "value": "changed"}),
+            ),
+            (
+                "edit_schematic_component",
+                json!({"schematic": path, "reference": "R1", "fields": {"DNP": "yes"}, "value": "changed"}),
+            ),
+            (
+                "batch_edit_schematic_components",
+                json!({"schematic": path, "edits": [{"reference": "R1", "fields": {"dnp": "yes"}, "value": "changed"}]}),
+            ),
+        ] {
+            let response = handler.handle_message(json!({"jsonrpc": "2.0", "id": 680, "method": "tools/call", "params": {"name": name, "arguments": args}})).await.unwrap();
+            assert!(
+                response.error.is_some()
+                    || response
+                        .result
+                        .as_ref()
+                        .is_some_and(|result| result["isError"] == true),
+                "{response:?}"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
         }
     }
 }

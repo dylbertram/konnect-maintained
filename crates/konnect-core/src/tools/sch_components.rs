@@ -78,7 +78,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "edit_schematic_component",
-            "Update fields (Reference, Value, Footprint, custom properties) consistently across every placed unit of a component, and move or hide the text of any of them.",
+            "Update fields or native DNP consistently across every placed unit, with committed-file readback. DNP is not a custom property.",
             json!({
                 "type": "object",
                 "properties": {
@@ -88,6 +88,7 @@ pub fn tools() -> Vec<ToolDef> {
                     "value": { "type": "string", "description": "New value (optional)" },
                     "footprint": { "type": "string", "description": "New footprint (optional)" },
                     "datasheet": { "type": "string", "description": "New datasheet URL (optional)" },
+                    "dnp": { "type": "boolean", "description": "Set KiCad's native do-not-populate flag on every unit; omitted preserves it." },
                     "fields": {
                         "type": "object",
                         "additionalProperties": true,
@@ -1038,13 +1039,13 @@ fn verify_component_expectations(
 }
 
 #[derive(Debug, Clone)]
-struct ComponentTarget {
+pub(crate) struct ComponentTarget {
     reference: String,
     units: Vec<ComponentTargetUnit>,
 }
 
 impl ComponentTarget {
-    fn with_fields(&self, fields: &BTreeMap<String, String>) -> Self {
+    pub(crate) fn with_fields(&self, fields: &BTreeMap<String, String>) -> Self {
         let mut expected = self.clone();
         if let Some(reference) = fields.get("Reference") {
             expected.reference = reference.clone();
@@ -1059,7 +1060,7 @@ impl ComponentTarget {
         self.units.iter().map(|unit| unit.uuid.clone()).collect()
     }
 
-    fn item_ids(&self) -> Result<Vec<ItemId>, ComponentDeleteTargetError> {
+    pub(crate) fn item_ids(&self) -> Result<Vec<ItemId>, ComponentDeleteTargetError> {
         self.units
             .iter()
             .map(|unit| {
@@ -1072,7 +1073,7 @@ impl ComponentTarget {
     }
 }
 
-fn component_target_from_source(
+pub(crate) fn component_target_from_source(
     path: &std::path::Path,
     content: &str,
     reference: &str,
@@ -1412,6 +1413,7 @@ fn component_mutation_readback_from_schematic(
         units.push(json!({
             "uuid": symbol.uuid,
             "unit": symbol.unit,
+            "dnp": symbol.dnp,
             "x": symbol.at.x,
             "y": symbol.at.y,
             "rotation": symbol.at.rotation.unwrap_or(0.0),
@@ -1430,6 +1432,7 @@ fn component_mutation_readback_from_schematic(
     Ok(json!({
         "schematic": committed.filepath().display().to_string(),
         "reference": reference,
+        "dnp": anchor.dnp,
         "value": anchor.value_str().unwrap_or(""),
         "footprint": anchor.footprint().unwrap_or(""),
         "datasheet": anchor.datasheet().unwrap_or(""),
@@ -1455,19 +1458,26 @@ fn load_component_mutation_readback(
 }
 
 #[derive(Debug, Clone)]
-struct ComponentMutationIntent {
+pub(crate) struct ComponentMutationIntent {
     target: ComponentTarget,
     field_placements: Vec<(String, FieldPlacement)>,
     placement_unit: Option<u32>,
+    dnp: Option<bool>,
 }
 
 impl ComponentMutationIntent {
-    fn new(target: ComponentTarget) -> Self {
+    pub(crate) fn new(target: ComponentTarget) -> Self {
         Self {
             target,
             field_placements: Vec::new(),
             placement_unit: None,
+            dnp: None,
         }
+    }
+
+    pub(crate) fn with_dnp(mut self, dnp: Option<bool>) -> Self {
+        self.dnp = dnp;
+        self
     }
 
     fn with_field_placements(
@@ -1519,6 +1529,18 @@ fn verify_component_mutation_intents(
     let mut observations = Vec::with_capacity(intents.len());
     for intent in intents {
         let observed = verified_component_readback(path, schematic, &intent.target)?;
+        if let Some(dnp) = intent.dnp {
+            if observed["units"]
+                .as_array()
+                .is_none_or(|units| units.iter().any(|unit| unit["dnp"].as_bool() != Some(dnp)))
+            {
+                return Err(ComponentDeleteTargetError::stale(
+                    path,
+                    format!("{phase} native DNP differs from requested state"),
+                )
+                .into_result());
+            }
+        }
         verify_requested_field_placements(path, &observed, intent, phase)?;
         observations.push(observed);
     }
@@ -1581,7 +1603,7 @@ fn apply_component_prospective_fault(source: String) -> String {
 /// Validate the exact prospective command result before committing it, then
 /// independently verify the saved file. A prospective mismatch is a true
 /// no-op; a post-commit mismatch is reported as an uncertain mutation outcome.
-fn commit_verified_component_mutation(
+pub(crate) fn commit_verified_component_mutation(
     path: &std::path::Path,
     before: &str,
     command: &SchematicCommand,
@@ -1647,6 +1669,7 @@ fn copy_component_observation(result: &mut serde_json::Value, observed: &serde_j
     for key in [
         "schematic",
         "reference",
+        "dnp",
         "value",
         "footprint",
         "datasheet",
@@ -2248,6 +2271,75 @@ fn component_delete_commit_refusal(
 /// rewrite entirely — a rename that the netlist ignores (#157).
 fn is_reserved_property(name: &str) -> bool {
     matches!(name, "Reference" | "Value" | "Footprint" | "Datasheet")
+        || name.eq_ignore_ascii_case("dnp")
+}
+
+pub(crate) fn dnp_arg(args: &serde_json::Value) -> Result<Option<bool>, CallToolResult> {
+    match args.get("dnp") {
+        None => Ok(None),
+        Some(serde_json::Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err(crate::tools::invalid_arg("dnp", "must be a boolean")),
+    }
+}
+
+/// Change only the direct native flag of each placed unit, not a library or property node.
+pub(crate) fn set_native_dnp(content: &str, reference: &str, dnp: bool) -> Result<String, String> {
+    let blocks = find_all_symbol_instance_blocks(content, reference);
+    if blocks.is_empty() {
+        return Err(format!("symbol '{reference}' not found"));
+    }
+    let mut edits = Vec::new();
+    for (start, end) in blocks {
+        let block = &content[start..end];
+        let children = find_direct_child_blocks(block, "symbol");
+        let mut flags = Vec::new();
+        let mut uuid_start = None;
+        for &(a, b) in &children {
+            let node = parse_sexp(&block[a..b]).map_err(|e| e.to_string())?;
+            match node.head() {
+                Some("dnp") => flags.push((a, b, node)),
+                Some("uuid") => uuid_start = Some(a),
+                _ => {}
+            }
+        }
+        if flags.len() > 1 {
+            return Err(format!(
+                "'{reference}' has multiple native dnp flags on one unit"
+            ));
+        }
+        let replacement = format!("(dnp {})", if dnp { "yes" } else { "no" });
+        if let Some((a, b, node)) = flags.first() {
+            if node.children().map_or(0, |children| children.len()) != 2
+                || !matches!(node.get(1).and_then(|v| v.as_str()), Some("yes" | "no"))
+            {
+                return Err(format!("'{reference}' has a malformed native dnp flag"));
+            }
+            edits.push(SexpEdit::replace(start + a, start + b, replacement));
+        } else {
+            // Older schematic files may omit this optional flag (KiCad reads
+            // that as false). Insert before the symbol UUID in KiCad's order.
+            let uuid = uuid_start.ok_or_else(|| format!("'{reference}' has no symbol UUID"))?;
+            let line = block[..uuid].rfind('\n').map_or(0, |n| n + 1);
+            let indent = &block[line..uuid];
+            let separator = if indent.bytes().all(|b| matches!(b, b' ' | b'\t')) {
+                format!(
+                    "{}{indent}",
+                    if content.contains("\r\n") {
+                        "\r\n"
+                    } else {
+                        "\n"
+                    }
+                )
+            } else {
+                " ".to_owned()
+            };
+            edits.push(SexpEdit::insert(
+                start + uuid,
+                format!("{replacement}{separator}"),
+            ));
+        }
+    }
+    Ok(apply_edits(content.to_owned(), edits))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2342,7 +2434,21 @@ fn property_insert_edit(
         .rfind(')')
         .map(|offset| start + offset)
         .ok_or_else(|| format!("symbol block for '{reference}' is malformed"))?;
-    Ok(SexpEdit::insert(close, prop))
+    // A KiCad-formatted closing parenthesis is usually on its own indented
+    // line. Insert before that indentation, not after it: otherwise the
+    // leading newline in `prop` turns the indentation into trailing whitespace.
+    let line_start = content[..close].rfind('\n').map_or(0, |n| n + 1);
+    if content[line_start..close]
+        .bytes()
+        .all(|byte| matches!(byte, b' ' | b'\t'))
+    {
+        Ok(SexpEdit::insert(
+            line_start,
+            format!("{}{newline}", &prop[newline.len()..]),
+        ))
+    } else {
+        Ok(SexpEdit::insert(close, prop))
+    }
 }
 
 /// Set one shared component property in every placed unit.
@@ -2712,6 +2818,20 @@ async fn handle_edit_schematic_component(
         Err(e) => return Ok(e),
     };
 
+    let dnp = match dnp_arg(args) {
+        Ok(value) => value,
+        Err(error) => return Ok(error),
+    };
+    if args["fields"]
+        .as_object()
+        .is_some_and(|fields| fields.keys().any(|name| name.eq_ignore_ascii_case("dnp")))
+    {
+        return Ok(crate::tools::invalid_arg(
+            "fields",
+            "DNP is a native flag; use the boolean dnp argument",
+        ));
+    }
+
     let mut content = read_consistent(&sch_path)?;
     let expected = content.clone();
     let target = match component_target_from_source(&sch_path, &expected, &reference) {
@@ -2774,6 +2894,13 @@ async fn handle_edit_schematic_component(
     }
     if let Some(ds) = opt_str(args, "datasheet") {
         apply!("Datasheet", ds);
+    }
+    if let Some(value) = dnp {
+        content = match set_native_dnp(&content, edit_reference, value) {
+            Ok(content) => content,
+            Err(error) => return Ok(CallToolResult::error(error)),
+        };
+        changed.push(format!("native DNP → {value}"));
     }
 
     // `fields` has been in this tool's schema since it shipped and the handler
@@ -2926,7 +3053,8 @@ async fn handle_edit_schematic_component(
     }
 
     let intent = ComponentMutationIntent::new(target.with_fields(&expected_fields))
-        .with_field_placements(applied_placements, placement_unit);
+        .with_field_placements(applied_placements, placement_unit)
+        .with_dnp(dnp);
     let observed = if !changed.is_empty() {
         let item_ids = match target.item_ids() {
             Ok(item_ids) => item_ids,
@@ -3014,6 +3142,7 @@ async fn handle_get_schematic_component(
             let unit_mirror = symbol.mirror.as_deref().unwrap_or("");
             json!({
                 "unit": symbol.unit,
+                "dnp": symbol.dnp,
                 "x": unit_x,
                 "y": unit_y,
                 "rotation": symbol.at.rotation.unwrap_or(0.0),
@@ -3025,6 +3154,7 @@ async fn handle_get_schematic_component(
         .collect();
     Ok(CallToolResult::json(&json!({
         "reference": anchor.reference().unwrap_or("?"),
+        "dnp": anchor.dnp,
         "value": anchor.value_str().unwrap_or(""),
         "footprint": anchor.footprint().unwrap_or(""),
         "lib_id": anchor.lib_id,
@@ -3056,6 +3186,7 @@ async fn handle_list_schematic_components(
             let mirror = sym.mirror.as_deref().unwrap_or("");
             json!({
                 "reference": sym.reference().unwrap_or("?"),
+                "dnp": sym.dnp,
                 "value": sym.value_str().unwrap_or(""),
                 "footprint": sym.footprint().unwrap_or(""),
                 "lib_id": sym.lib_id,

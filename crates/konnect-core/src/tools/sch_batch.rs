@@ -199,7 +199,7 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "batch_edit_schematic_components",
-            "Apply field updates (Value, Footprint, custom properties) to multiple components \
+            "Apply field updates or native DNP to multiple components \
              in a single atomic file write. Missing custom properties are created on every \
              placed unit only when create_missing is true.",
             json!({
@@ -220,6 +220,7 @@ pub fn tools() -> Vec<ToolDef> {
                                 "reference": { "type": "string" },
                                 "value": { "type": "string" },
                                 "footprint": { "type": "string" },
+                                "dnp": { "type": "boolean", "description": "Native do-not-populate flag; omission preserves the current state." },
                                 "fields": {
                                     "type": "object",
                                     "additionalProperties": { "type": "string" },
@@ -1159,7 +1160,52 @@ async fn handle_batch_edit(
         Some(_) => return Ok(invalid_arg("create_missing", "must be a boolean")),
     };
 
+    let mut dnp_requests = BTreeMap::new();
+    for edit in &edits_arr {
+        let dnp = match super::sch_components::dnp_arg(edit) {
+            Ok(dnp) => dnp,
+            Err(error) => return Ok(error),
+        };
+        if edit["fields"]
+            .as_object()
+            .is_some_and(|fields| fields.keys().any(|name| name.eq_ignore_ascii_case("dnp")))
+        {
+            return Ok(invalid_arg(
+                "fields",
+                "DNP is a native flag; use the boolean dnp argument",
+            ));
+        }
+        if let Some(dnp) = dnp {
+            let Some(reference) = edit["reference"].as_str() else {
+                return Ok(invalid_arg("reference", "required for dnp"));
+            };
+            if dnp_requests.insert(reference.to_owned(), dnp).is_some() {
+                return Ok(invalid_arg(
+                    "dnp",
+                    "duplicate assignment for the same reference",
+                ));
+            }
+        }
+    }
+
     let expected = read_consistent(&sch_path)?;
+    let mut targets = BTreeMap::new();
+    if !dnp_requests.is_empty() {
+        for edit in &edits_arr {
+            let Some(reference) = edit["reference"].as_str() else {
+                return Ok(invalid_arg("reference", "required in every DNP batch edit"));
+            };
+            if !targets.contains_key(reference) {
+                let target = match super::sch_components::component_target_from_source(
+                    &sch_path, &expected, reference,
+                ) {
+                    Ok(target) => target,
+                    Err(error) => return Ok(error.into_result()),
+                };
+                targets.insert(reference.to_owned(), target);
+            }
+        }
+    }
     let mut content = expected.clone();
     let mut changed: Vec<serde_json::Value> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
@@ -1180,6 +1226,14 @@ async fn handle_batch_edit(
         let mut field_results = Vec::new();
         let mut updated_fields = BTreeSet::new();
         let mut created_fields = BTreeSet::new();
+
+        if let Some(value) = edit_spec.get("dnp").and_then(Value::as_bool) {
+            content = match super::sch_components::set_native_dnp(&content, reference, value) {
+                Ok(content) => content,
+                Err(error) => return Ok(CallToolResult::error(error)),
+            };
+            component_changes.push(format!("native DNP → {value}"));
+        }
 
         // Standard fields, then arbitrary extra fields from the "fields" object.
         // Each is rewritten in every unit's block, which is where a multi-unit
@@ -1277,7 +1331,65 @@ async fn handle_batch_edit(
         }
     }
 
-    write_atomic_if_unchanged(&sch_path, &expected, &content)?;
+    if dnp_requests.is_empty() {
+        write_atomic_if_unchanged(&sch_path, &expected, &content)?;
+    } else {
+        if !errors.is_empty() {
+            return Ok(CallToolResult::error(format!(
+                "No edits applied: {}",
+                errors.join("; ")
+            )));
+        }
+        let mut ids = Vec::new();
+        let mut intents = Vec::new();
+        for (reference, target) in &targets {
+            let mut fields = BTreeMap::new();
+            for entry in &changed {
+                if entry["reference"].as_str() == Some(reference) {
+                    for field in entry["fields"].as_array().into_iter().flatten() {
+                        if let (Some(name), Some(value)) =
+                            (field["name"].as_str(), field["value"].as_str())
+                        {
+                            fields.insert(name.to_owned(), value.to_owned());
+                        }
+                    }
+                }
+            }
+            ids.extend(match target.item_ids() {
+                Ok(ids) => ids,
+                Err(error) => return Ok(error.into_result()),
+            });
+            intents.push(
+                super::sch_components::ComponentMutationIntent::new(target.with_fields(&fields))
+                    .with_dnp(dnp_requests.get(reference).copied()),
+            );
+        }
+        let command = konnect_sexp::SchematicCommand::replace_items_from_document(
+            &expected,
+            &content,
+            ids,
+            "Batch edit components".to_owned(),
+        )?;
+        let observations = match super::sch_components::commit_verified_component_mutation(
+            &sch_path,
+            &expected,
+            &command,
+            &intents,
+            "batch_edit_schematic_components",
+        )? {
+            Ok(observations) => observations,
+            Err(error) => return Ok(error),
+        };
+        for entry in &mut changed {
+            if let Some(observed) = observations
+                .iter()
+                .find(|observed| observed["reference"] == entry["reference"])
+            {
+                entry["dnp"] = observed["dnp"].clone();
+                entry["units"] = observed["units"].clone();
+            }
+        }
+    }
 
     Ok(CallToolResult::json(&json!({
         "updated_count": changed.len(),
@@ -3219,6 +3331,192 @@ mod multi_unit_handler_tests {
     }
 
     #[tokio::test]
+    async fn batch_native_dnp_round_trips_each_unit() {
+        let schematic = fixture_file();
+        for value in [true, false] {
+            let result = call(
+                schematic.path(),
+                "batch_edit_schematic_components",
+                json!({"edits": [{"reference": "U1", "dnp": value, "value": "ECC83"}]}),
+            )
+            .await;
+            assert_eq!(result["updated"][0]["dnp"], value);
+            let units = result["updated"][0]["units"].as_array().unwrap();
+            assert_eq!(units.len(), 3);
+            assert!(units.iter().all(|unit| unit["dnp"] == value));
+            let saved = cse::Schematic::load(schematic.path()).unwrap();
+            assert!(saved
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.reference() == Some("U1"))
+                .all(|symbol| symbol.dnp == value));
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_native_dnp_round_trip_and_committed_readback() {
+        let schematic = fixture_file();
+        for wanted in [true, false] {
+            let result = call(
+                schematic.path(),
+                "batch_edit_schematic_components",
+                json!({"create_missing": true, "edits": [{"reference": "U1", "dnp": wanted, "fields": {"Note": "test"}}]}),
+            ).await;
+            assert_eq!(result["errors"], json!([]));
+            assert_eq!(result["updated"][0]["dnp"], wanted);
+            let units = result["updated"][0]["units"].as_array().unwrap();
+            assert_eq!(units.len(), 3);
+            assert!(units.iter().all(|unit| unit["dnp"] == wanted));
+            let saved = cse::Schematic::load(schematic.path()).unwrap();
+            assert!(saved
+                .symbols
+                .iter()
+                .filter(|s| s.reference() == Some("U1"))
+                .all(|s| s.dnp == wanted));
+        }
+    }
+
+    #[tokio::test]
+    async fn native_dnp_single_and_refusal_are_atomic() {
+        let schematic = fixture_file();
+        let context = || {
+            Arc::new(ToolContext::new(
+                ServerConfig::default(),
+                Arc::new(crate::router::ToolRouter::new()),
+            ))
+        };
+        let single = super::super::sch_components::tools()
+            .into_iter()
+            .find(|tool| tool.name == "edit_schematic_component")
+            .unwrap();
+        let path = schematic.path().to_str().unwrap();
+        let result = (single.handler)(
+            &json!({"schematic": path, "reference": "U1", "dnp": true}),
+            context(),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error, "{result:?}");
+        for name in ["get_schematic_component", "list_schematic_components"] {
+            let tool = super::super::sch_components::tools()
+                .into_iter()
+                .find(|tool| tool.name == name)
+                .unwrap();
+            let result = (tool.handler)(&json!({"schematic": path, "reference": "U1"}), context())
+                .await
+                .unwrap();
+            assert!(!result.is_error, "{result:?}");
+            let crate::mcp::protocol::ToolContent::Text { text } = &result.content[0] else {
+                panic!("expected JSON text")
+            };
+            let body: Value = serde_json::from_str(text).unwrap();
+            if name == "get_schematic_component" {
+                assert_eq!(body["dnp"], true);
+                assert!(body["units"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|unit| unit["dnp"] == true));
+            } else {
+                let entries = body["components"].as_array().unwrap();
+                assert_eq!(
+                    entries
+                        .iter()
+                        .filter(|entry| entry["reference"] == "U1" && entry["dnp"] == true)
+                        .count(),
+                    3
+                );
+            }
+        }
+        let omitted = (single.handler)(
+            &json!({"schematic": path, "reference": "U1", "value": "changed"}),
+            context(),
+        )
+        .await
+        .unwrap();
+        assert!(!omitted.is_error, "{omitted:?}");
+        let parsed = cse::Schematic::load(schematic.path()).unwrap();
+        assert!(parsed
+            .symbols
+            .iter()
+            .filter(|s| s.reference() == Some("U1"))
+            .all(|s| s.dnp));
+        let saved = std::fs::read_to_string(path).unwrap();
+        for args in [
+            json!({"schematic": path, "reference": "U1", "dnp": "yes", "value": "BAD"}),
+            json!({"schematic": path, "reference": "U1", "fields": {"DNP": "yes"}, "value": "BAD"}),
+        ] {
+            let result = (single.handler)(&args, context()).await.unwrap();
+            assert!(result.is_error, "{result:?}");
+            assert_eq!(std::fs::read_to_string(path).unwrap(), saved);
+        }
+        let batch = tools()
+            .into_iter()
+            .find(|tool| tool.name == "batch_edit_schematic_components")
+            .unwrap();
+        for edits in [
+            json!([{"reference": "U1", "dnp": false}, {"reference": "missing", "dnp": true}]),
+            json!([{"reference": "U1", "value": "BAD", "fields": {"dnp": "yes"}}]),
+            json!([{"reference": "U1", "dnp": null, "value": "BAD"}]),
+        ] {
+            let result = (batch.handler)(&json!({"schematic": path, "edits": edits}), context())
+                .await
+                .unwrap();
+            assert!(result.is_error, "{result:?}");
+            assert_eq!(std::fs::read_to_string(path).unwrap(), saved);
+        }
+    }
+
+    #[test]
+    fn native_dnp_inserts_missing_flag_without_disturbing_line_endings() {
+        for newline in ["\n", "\r\n"] {
+            let source = format!("(kicad_sch{newline}\t(symbol{newline}\t\t(lib_id \"Device:R\"){newline}\t\t(uuid \"a\"){newline}\t\t(property \"Reference\" \"R1\"){newline}\t){newline}){newline}");
+            let updated =
+                super::super::sch_components::set_native_dnp(&source, "R1", true).unwrap();
+            assert!(updated.contains(&format!("\t\t(dnp yes){newline}\t\t(uuid")));
+            assert_eq!(
+                updated.replace(&format!("\t\t(dnp yes){newline}"), ""),
+                source
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires KiCad 10 kicad-cli"]
+    async fn native_dnp_kicad_bom_exclusion_after_toggle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ecc83-pp.kicad_sch");
+        std::fs::write(&path, ECC83).unwrap();
+        let bom = dir.path().join("bom.csv");
+        for dnp in [false, true, false] {
+            let result = call(
+                &path,
+                "batch_edit_schematic_components",
+                json!({"edits": [{"reference": "R1", "dnp": dnp}]}),
+            )
+            .await;
+            assert_eq!(result["updated"][0]["dnp"], dnp);
+            let output = std::process::Command::new("kicad-cli")
+                .args(["sch", "export", "bom", "--exclude-dnp", "--output"])
+                .arg(&bom)
+                .arg(&path)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let csv = std::fs::read_to_string(&bom).unwrap();
+            let mut reader = csv::Reader::from_reader(csv.as_bytes());
+            let contains = reader
+                .records()
+                .any(|record| record.unwrap().get(0) == Some("R1"));
+            assert_eq!(contains, !dnp, "unexpected BOM contents: {csv}");
+        }
+    }
+
+    #[tokio::test]
     async fn batch_edit_missing_custom_field_is_opt_in_and_multi_unit_safe() {
         let schematic = fixture_file();
         let original = std::fs::read_to_string(schematic.path()).unwrap();
@@ -3256,6 +3554,10 @@ mod multi_unit_handler_tests {
         );
         assert_eq!(created["updated"][0]["fields"][0]["created_units"], 3);
         let committed = std::fs::read_to_string(schematic.path()).unwrap();
+        assert!(
+            committed.lines().all(|line| !line.ends_with([' ', '\t'])),
+            "inserting fields must not introduce trailing whitespace"
+        );
         assert_eq!(
             committed.matches(r#"(property "Tolerance" "1%""#).count(),
             3
@@ -3292,6 +3594,74 @@ mod multi_unit_handler_tests {
             3
         );
         assert!(!committed.contains(r#"(property "Tolerance" "1%""#));
+    }
+
+    #[tokio::test]
+    async fn inserted_custom_fields_are_the_only_changes() {
+        for newline in ["\n", "\r\n"] {
+            let mut schematic = tempfile::NamedTempFile::with_suffix(".kicad_sch").unwrap();
+            let original = ECC83.replace('\n', newline);
+            schematic.write_all(original.as_bytes()).unwrap();
+            schematic.flush().unwrap();
+            call(schematic.path(), "batch_edit_schematic_components", json!({
+                "create_missing": true,
+                "edits": [{"reference": "U1", "fields": {"Populate": "DNP", "BOM_Exclude": "true"}}]
+            })).await;
+            let saved = std::fs::read_to_string(schematic.path()).unwrap();
+            let mut removals = Vec::new();
+            for (start, end) in find_all_symbol_instance_blocks(&saved, "U1") {
+                let block = &saved[start..end];
+                for name in ["Populate", "BOM_Exclude"] {
+                    let pos = start + block.find(&format!("(property \"{name}\"")).unwrap();
+                    let line_start = saved[..pos].rfind('\n').unwrap() + 1;
+                    let (_, property_end) =
+                        konnect_sexp::writer::find_balanced_block(&saved, pos).unwrap();
+                    assert!(saved[property_end..].starts_with(newline));
+                    removals.push(SexpEdit::delete(line_start, property_end + newline.len()));
+                }
+            }
+            assert_eq!(removals.len(), 6);
+            assert_eq!(apply_edits(saved, removals), original);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires KiCad 10 kicad-cli"]
+    async fn custom_field_insertion_preserves_kicad_erc_and_netlist_connectivity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ecc83-pp.kicad_sch");
+        std::fs::write(&path, ECC83).unwrap();
+        let evidence = |suffix: &str| {
+            let net = dir.path().join(format!("{suffix}.net"));
+            let erc = dir.path().join(format!("{suffix}.json"));
+            for (args, output) in [
+                (vec!["sch", "export", "netlist", "--output"], &net),
+                (vec!["sch", "erc", "--format", "json", "--output"], &erc),
+            ] {
+                let result = std::process::Command::new("kicad-cli")
+                    .args(args)
+                    .arg(output)
+                    .arg(&path)
+                    .output()
+                    .unwrap();
+                assert!(
+                    result.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+            let net = konnect_sexp::parse_sexp(&std::fs::read_to_string(net).unwrap()).unwrap();
+            let nets = net.find("nets").expect("netlist contains nets").clone();
+            let erc: Value = serde_json::from_slice(&std::fs::read(erc).unwrap()).unwrap();
+            (nets, erc["sheets"].clone())
+        };
+        let before = evidence("before");
+        call(&path, "batch_edit_schematic_components", json!({"create_missing": true, "edits": [{"reference": "R1", "fields": {"Populate": "DNP", "BOM_Exclude": "true"}}]})).await;
+        let after = evidence("after");
+        assert_eq!(
+            after, before,
+            "metadata edit changed ERC or net connectivity"
+        );
     }
 
     #[tokio::test]
@@ -3446,6 +3816,10 @@ mod multi_unit_handler_tests {
         assert_eq!(result["created_unit_copies"], 3);
         let committed = std::fs::read_to_string(schematic.path()).unwrap();
         assert!(!committed.replace("\r\n", "").contains('\n'));
+        assert!(
+            committed.lines().all(|line| !line.ends_with([' ', '\t'])),
+            "CRLF field insertion must not introduce trailing whitespace"
+        );
         assert_eq!(
             committed.matches("\r\n\t\t(property \"Tolerance\"").count(),
             3
