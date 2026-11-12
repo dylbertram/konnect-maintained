@@ -1,5 +1,9 @@
 # First stabilization audit
 
+This records the initial 2026-10-27 screening, not current merge or release
+readiness. Use Kata for current issue status and the linked PRs for their later
+disposition.
+
 The source snapshot covers every open item in the archived repository on
 2026-10-27: 201 issues and 63 PRs. Kata contains all 264 items and 296 discussion
 entries. The import was read back and deduplication checked. Open historical
