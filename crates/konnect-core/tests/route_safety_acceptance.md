@@ -173,9 +173,62 @@ undocumented `junction_reconcile` source was replaced with the documented
 rotation fixture. These are construction corrections, not proof that any
 particular omission caused the failure. The structural regression and native
 source/round-trip controls are intended to distinguish those possibilities.
-This corrected revision has not been compiled, lifecycle-tested or exported
-by this child. Generated native validity remains blocked on the coordinator's
-new admitted run.
+The coordinator subsequently tested merged revision `9f5d69ad`, as recorded
+below. This child did not execute those checks.
+
+## Isolated label fixture rejection and correction
+
+Coordinator worker `bx_fv2c2jjy`, command `cmd_ramcfajlbuhk`, tested exact
+revision `9f5d69ad`. `stage1-full.log` records formatting, focused/batch/unit-aware
+tests, Clippy, and all three native supervisor tests passing. The native source
+control, typed round-trip, and `connect_pins` around/blocked before/after exports
+also passed. The next invocation failed at `connect_pins/label/before`, before
+any routed mutation of that case.
+
+Evidence is retained in the parent's
+`.remote-build-jobs/boat-route-verification/route-native-artifacts/`:
+
+- `connect_pins/label/before/request.json` identifies `/usr/bin/kicad-cli`,
+  `sch export netlist --format kicadsexpr --output
+  /tmp/.tmpICX7L7/route.before.net /tmp/.tmpICX7L7/route.kicad_sch`, and the
+  precise tool/case/phase.
+- Its `stderr.log` says `Failed to load schematic`; `finished.json` records
+  status 3, no timeout/interruption, and `group_reaped: true`.
+- The captured `route.kicad_sch` SHA-256 is
+  `e0f868710a6f0905f45fe97bdbb27c6a6309e26cde4e2a6e5e551c2047d67e64`.
+  Lines 149-156 contain two local labels with `(at 114.3 105.41)` and
+  `(at 120.65 107.95)`, lacking an angle.
+- The accepted `source_fixture.kicad_sch` labels, for example lines 201-209,
+  have three-coordinate forms such as `(at 149.86 160.02 0)`.
+
+This identifies a concrete native grammar violation. KiCad 10.0.8's
+[`SCH_IO_KICAD_SEXPR_PARSER::parseSchText`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.8/eeschema/sch_io/kicad_sexpr/sch_io_kicad_sexpr_parser.cpp#L4641-L4696)
+handles local and hierarchical labels, then reads `parseXY()` followed
+unconditionally by `parseDouble("text angle")` inside `at`. The captured closing
+parenthesis appears where that numeric angle is required.
+
+The source path to those exact bytes is also explicit: `Label::new` and
+`Schematic::add_hierarchical_label` initialize `At::new`, whose rotation is
+`None`; `At::to_sexp` emits no angle for `None`. The route fixtures called
+`add_label` without the existing `set_rotation` step. This is not a missing
+symbol UUID, library geometry, guard behavior or native process cleanup issue.
+
+The minimal correction calls `set_rotation(0.0)` on every label created in this
+test module. That existing typed API emits the required third coordinate and
+normal text effects. The child hierarchical label had the same constructor
+omission, so it receives the same correction before its native case runs.
+That child defect is source-proven, not a claim of an observed sheet failure.
+No production serializer defaults, route guard, routing assertions, captured
+CAD files or repository fixture files are changed.
+
+`route_safety_generated_labels_include_native_required_angles` checks the
+serialized local and child hierarchical labels, with nonzero expected label
+counts, exactly x/y/zero-angle coordinates, and effects from `set_rotation`.
+Removing these setters is a proposed negative control for this regression.
+No native assertions or terminal checks are relaxed. The coordinator still
+must rerun the complete native oracle on the corrected commit and then run
+the guard/filter mutation controls. None of those mutation controls has run,
+and the child ran no builds, tests, jobs or native commands for this correction.
 
 ## Negative controls
 

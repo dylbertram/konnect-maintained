@@ -84,8 +84,8 @@ fn design(case: &str) -> (tempfile::TempDir, PathBuf) {
         "label" => {
             // A label alone on each bend, with no pin terminal to mask a
             // missing label guard.
-            sch.add_label("OTHER", 114.3, 105.41);
-            sch.add_label("OTHER", 120.65, 107.95);
+            sch.add_label("OTHER", 114.3, 105.41).set_rotation(0.0);
+            sch.add_label("OTHER", 120.65, 107.95).set_rotation(0.0);
         }
         "sheet" => {
             let child_path = dir.path().join("child.kicad_sch");
@@ -93,6 +93,11 @@ fn design(case: &str) -> (tempfile::TempDir, PathBuf) {
             child.uuid = Some(konnect_sexp::writer::new_uuid());
             resistor(&mut child, "R61", 50.8, 50.8);
             child.add_hierarchical_label("IN", "input", 50.8, 46.99);
+            child
+                .hierarchical_labels
+                .get_mut(0)
+                .unwrap()
+                .set_rotation(0.0);
             let mut sheet = cse::Sheet::new("SUB", "child.kicad_sch", 127.0, 96.52, 19.05, 10.16);
             sheet
                 .pins
@@ -234,6 +239,38 @@ fn route_safety_generated_fixture_preserves_native_instance_records_with_fresh_i
             instances[0].path,
             generated.uuid.as_ref().map(|uuid| format!("/{uuid}"))
         );
+    }
+}
+
+#[test]
+fn route_safety_generated_labels_include_native_required_angles() {
+    for (case, child, expected) in [("label", false, 2), ("sheet", true, 1)] {
+        let (_dir, path) = design(case);
+        let path = if child {
+            path.with_file_name("child.kicad_sch")
+        } else {
+            path
+        };
+        let generated = tree(&path);
+        let labels: Vec<_> = generated
+            .find_all("label")
+            .into_iter()
+            .chain(generated.find_all("hierarchical_label"))
+            .collect();
+        assert_eq!(labels.len(), expected);
+        for label in labels {
+            let at = label.find("at").expect("serialized label position");
+            assert_eq!(
+                at.get(3).and_then(konnect_sexp::SexpNode::as_str),
+                Some("0"),
+                "{case}: KiCad parseSchText requires an explicit angle"
+            );
+            assert!(at.get(4).is_none(), "{case}: expected exactly x/y/angle");
+            assert!(
+                label.find("effects").is_some(),
+                "{case}: rotation must set text effects"
+            );
+        }
     }
 }
 
@@ -386,8 +423,8 @@ async fn route_safety_served_straight_route_refuses_a_third_pin() {
 async fn route_safety_served_preexisting_same_net_pin_is_allowed() {
     let (_dir, path) = design("around");
     let mut sch = cse::Schematic::load(&path).unwrap();
-    sch.add_label("ALREADY", 101.6, 105.41);
-    sch.add_label("ALREADY", 114.3, 105.41);
+    sch.add_label("ALREADY", 101.6, 105.41).set_rotation(0.0);
+    sch.add_label("ALREADY", 114.3, 105.41).set_rotation(0.0);
     sch.overwrite().unwrap();
     let (error, body) = call("connect_pins", &path, pair()).await;
     assert!(!error, "{body}");
@@ -403,7 +440,7 @@ async fn route_safety_served_crossing_without_junction_remains_separate() {
     let (_dir, path) = design("clear");
     let mut sch = cse::Schematic::load(&path).unwrap();
     sch.add_wire(114.3, 99.06, 114.3, 111.76);
-    sch.add_label("CROSSING", 114.3, 99.06);
+    sch.add_label("CROSSING", 114.3, 99.06).set_rotation(0.0);
     sch.overwrite().unwrap();
     let (error, body) = call("connect_pins", &path, pair()).await;
     assert!(!error, "{body}");
