@@ -3316,10 +3316,9 @@ mod tests {
                         message.value.as_slice(),
                     )
                     .unwrap();
-                    let instance = kiapi::board::types::FootprintInstance::decode(
-                        footprint.value.as_slice(),
-                    )
-                    .unwrap();
+                    let instance =
+                        kiapi::board::types::FootprintInstance::decode(footprint.value.as_slice())
+                            .unwrap();
                     // SYNTHETIC native response for this mock instance, not
                     // a saved native fixture or a native acceptance oracle.
                     api_reply(builders::pack_any(

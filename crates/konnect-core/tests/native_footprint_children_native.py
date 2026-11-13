@@ -213,7 +213,11 @@ def main():
                 # An explicitly unlinked native instance allows the sync's
                 # existing reference fallback to link the public new schematic.
                 fp.SetPath(pcbnew.KIID_PATH())
-            lifecycle.save_native(board, native)
+            # This local import happened after desktop isolation. The reused
+            # lifecycle module intentionally has no module-global pcbnew when
+            # imported, so do not call its standalone save_native helper.
+            assert pcbnew.SaveBoard(str(board), native), f"native save failed: {board}"
+            assert board.is_file() and board.stat().st_size > 0, board
             shutil.copyfile(board, out / "native-prepared.kicad_pcb")
             lifecycle.open_editor(board, environment, api, out / "editor.log", run)
 
@@ -249,6 +253,9 @@ def main():
             assert not u1raw["native_group_kiid_raw_presence"][0]["utf8_in_raw_value"], u1raw
             assert u1raw["point_any_count"] > 0, u1raw
             assert u1raw["variant_field_20_occurrences"] > 0, u1raw
+            assert len(u1raw["raw_variants"]) == u1raw["variant_field_20_occurrences"], u1raw
+            assert [variant["decoded"]["name"] for variant in u1raw["raw_variants"]] == ["NoTimer"], u1raw
+            assert u1raw["raw_variants"][0]["decoded"]["do_not_populate"] is True, u1raw
             report["serialization_observations"] = u1raw
             disk_before = board.read_bytes()
             start = len(rpc_requests(proxy_log / "rpc.jsonl"))

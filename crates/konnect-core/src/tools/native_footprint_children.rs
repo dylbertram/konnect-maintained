@@ -104,7 +104,10 @@ pub(super) fn preflight(
                     }
                     match entries.get(&target.kiid).map(Vec::as_slice) {
                         Some([children]) => Ok(children.clone()),
-                        Some(_) => Err(format!("duplicate top-level footprint KIID {}", target.kiid)),
+                        Some(_) => Err(format!(
+                            "duplicate top-level footprint KIID {}",
+                            target.kiid
+                        )),
                         None => Err(format!("missing top-level footprint KIID {}", target.kiid)),
                     }
                 });

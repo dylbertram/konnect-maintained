@@ -4472,13 +4472,12 @@ mod tests {
         let responder_state = state.clone();
         // SYNTHETIC response matching the actual mock KIID. The old recovery
         // snapshot named unrelated footprints and is not child inventory.
-        let snapshot_kiid = kiapi::board::types::FootprintInstance::decode(
-            footprints_before[0].value.as_slice(),
-        )
-        .unwrap()
-        .id
-        .unwrap()
-        .value;
+        let snapshot_kiid =
+            kiapi::board::types::FootprintInstance::decode(footprints_before[0].value.as_slice())
+                .unwrap()
+                .id
+                .unwrap()
+                .value;
 
         let server = crate::tools::pcb_board::board_mock::spawn_kicad_holding_board(
             &board,

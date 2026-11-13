@@ -3,8 +3,8 @@
 Bounded implementation for existing Kata `konnect-maintained#3bqz` and
 `konnect-maintained#emvb`, based on `43c7497`. The field foundation merged at
 `d9b33fd` remains intact. No issue writes, jobs, installs, builds, tests, Boat
-calls or native executions were performed by this child. All executable
-acceptance gates below are pending coordinator admission and execution.
+calls or native executions were performed by this child. Restored acceptance
+remains pending; coordinator-only attempts are recorded below.
 
 ## Replacement boundary
 
@@ -18,6 +18,26 @@ whether the placed instance owns unsupported native children before replacing
 it. The vendored FootprintInstance schema has no variant field 20. A raw
 KiCad 10.0.8 capture is still required for this child to independently establish
 group omission, point Any serialization and variant field 20 behavior.
+
+Independent review of `fbb1d5d` blocked native execution. Its A8 helper called
+the field module's `save_native` without initializing that module's pcbnew
+global, and its raw field 20 evidence counted tags without decoding a variant
+name. The follow-up uses its own isolated local pcbnew import for SaveBoard
+and a pinned-schema, test-only raw variant decoder. These corrections have
+not been executed. The accepted field helper and NativeRun are unchanged.
+
+Coordinator format-only preflight `cmd_lyucyx067lyx` exited 1 on the source
+snapshot including the in-progress native fixes. The full rustfmt diff was
+retrieved to the parent worktree under
+`.remote-build-jobs/boat-native-children-verification/format-full.log`.
+This child applied the displayed Rust changes by patch, without invoking a
+formatter. A restored passing formatting gate is still pending. The reviewed
+production readiness, whole-plan refusal and noop/add-only boundaries are
+unchanged; their follow-up Rust edits are formatting only.
+Read-only text comparison matched all 34 displayed formatting hunks across
+five Rust files. Reversing those hunks reconstructs `fbb1d5d` exactly for the
+four core files; the capture example retains its separately documented native
+evidence fixes. This comparison is not a formatter, compiler or test result.
 
 Both tools now run the same read-only inventory for actual existing
 replacement targets only. It serializes the exact bound live document with
@@ -89,6 +109,15 @@ zero-test run. It independently disables group, point and variant refusal,
 removes inventory from each tool, skips apply rechecks in each tool and
 overlooks the unsafe target of a mixed plan. Every control restores exact
 source bytes in `finally`, then requires a restored positive gate.
+The formatting follow-up also pins each expected failure to its actual
+reviewed helper assertion site, resolved from a unique source marker rather
+than a stale numeric line. Kind-disabled, inventory-disabled and mixed-target
+controls must fail the conflict-status assertion. Apply-recheck controls must
+fail the missing compatibility diagnostic assertion in the each-kind and
+mixed tests, and the conflict-status assertion in the fresh-apply test.
+Named test failure alone, an RPC/mock panic or an unrelated assertion cannot
+satisfy these pins. These site expectations have been reviewed statically;
+actual control failure sites still require the coordinator's execution logs.
 
 ## Coordinator-admitted Rust and control commands
 
@@ -125,6 +154,10 @@ It registers only its own leaders, closes the owned editor and MCP/proxy
 leaders before root removal, reaps and audits descendants, records mounts
 and cleanup errors, and never signals shared services or unmounts anything.
 Failure retains an unclean root for coordinator inspection.
+The reused NativeRun, Api, stop_editor and open_editor functions use imports
+initialized by their module. A8 does not call that module's save_native,
+inspect, ordinary_texts or native_footprint functions, which depend on its
+main-only pcbnew global. A8 saves through its own post-isolation local import.
 
 The helper imports the fixture verbatim. A disposable accepted copy changes
 only through native pcbnew or public Konnect. A project-local native library
@@ -142,6 +175,10 @@ The Rust example `native_footprint_children_capture` has two test-only modes:
   reads GetItems and persists every raw `Any.value` before old-schema
   FootprintInstance decoding. It records raw top-level wire tags, child type
   URLs, native group KIID presence in raw bytes and field 20 occurrences.
+  Each field 20 payload is saved and decoded as FootprintVariant before
+  old-schema decoding of its containing FootprintInstance. Its actual name,
+  DNP/exclusion flags and field overrides are recorded, not inferred from
+  native text or a sent replacement.
 - `proxy LISTEN UPSTREAM OUT` forwards exact request/response bytes to the
   same owned editor. It records each request before forwarding. Guard calls
   use this proxy, so zero BeginCommit/mutation/save/revert evidence is a
@@ -152,6 +189,16 @@ separate artifacts. The helper checks native U1 ownership of exactly one
 group, one point and variant `NoTimer`, with R1 owning none. It separately
 requires no group Any/native group KIID bytes, a point Any and raw field 20.
 It never treats an old-schema decode as the original wire payload.
+Field 20 must independently decode to exactly `NoTimer`, with DNP true.
+A tag count alone is not evidence of that name. The read model and the
+`kiapi.board.types.ReferencePoint` Any name come from KiCad's 10.0.8 schema
+at immutable commit `e432beac2668303194ba2040274f9e5efe773fc0`.
+The full upstream schema SHA-256 is
+`fa7b175e769215541e8adb61200be2dafe473f3ec9f18d54801bada9be866587`.
+Source URL, tag provenance and field mapping are in
+`crates/konnect-ipc/tests/fixtures/footprint_variant_schema_kicad10_0_8.SOURCE.md`.
+Production protobuf definitions are not upgraded. No received payload is
+fabricated or re-encoded to supply an expected result.
 
 Both tools are called through public served dry run/apply guard paths against
 the mixed native board. Refusal must leave the full native string, every raw
