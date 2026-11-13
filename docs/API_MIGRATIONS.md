@@ -3,6 +3,25 @@
 Konnect's tool schemas are public API. This file records intentional argument
 removals and the supported replacement workflow.
 
+## Unreleased: saved-board writes refuse stale snapshots
+
+The file fallbacks for `set_board_size`, `add_layer`, `add_board_outline`,
+`delete_graphics`, `add_board_text`, `add_zone`/`add_copper_pour` and
+`import_svg_logo` now compare the complete board snapshot before replacement.
+If another save changed it, the call returns `conflict` with the board in
+`error.paths`. Nothing was written by that call. Reload and reapply the request.
+
+If replacement was attempted but persistence or immediate readback cannot be
+verified, the call returns `mutation_outcome_uncertain` with `operation`, `path`
+and `reason`, plus `outcome.status: "uncertain"` and an inspection-before-retry
+instruction. Inspect the board before repeating the operation. A zone alias
+reports its shared operation as `add_zone`.
+
+IPC and KiCad sibling-lock authority checks remain in force. `add_layer`, which
+has no live IPC implementation, now also applies the existing open-board
+refusal before reading the saved board. Inputs and successful response fields
+are unchanged.
+
 ## Unreleased: native schematic DNP
 
 `edit_schematic_component` and each entry in `batch_edit_schematic_components`
