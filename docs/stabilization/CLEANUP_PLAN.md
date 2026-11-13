@@ -153,14 +153,23 @@ activation, branch protection, release or publication are authorized by this pla
   omitted mandatory label angles. Fixture correction `d7f51fc` passed 12
   focused tests, three lifecycle tests and all 34 native netlist exports in
   `cmd_vog7xvmdi9st` on `bx_fv2c2jjy`. Every native audit reports successful
-  status and group cleanup. Mutation controls and integration remain pending.
-- Active implementation children are routes, library-field foundation and
-  text preservation. Foundation `d612c964` passes independent source review,
+  status and group cleanup. All six controls passed on runner `27a226a` in
+  `cmd_gkol9p8a3coc` and `cmd_y5dhfpe3w3ky`, with byte-exact restoration.
+  Native guard/local-T controls proved the expected accidental joins from
+  captured netlists; restored native checks passed. Merged at `7a01c94`;
+  its clean fully merged branch/worktree was removed. Full combined-parent
+  verification runs in `cmd_atizatpurxez`.
+- Active implementation children are library-field foundation and text
+  preservation. Foundation `d612c964` passes independent source review,
   focused suites, workspace Clippy and debug build in `cmd_tabivfq0xhab`.
   It normalizes protobuf-zero defaults and uses native Rotate controls.
   Native acceptance stopped before production on a missing design-block
   template; portable disposable configuration is being corrected.
-  Mutation controls run separately on the unchanged snapshot. Preserve
+  All 12 mutation controls passed with nine restored positives in
+  `cmd_tymm5zspprdn`. Later helper-only corrections reached passing native
+  sync/refresh comparisons on `d17297a`, but temporary HOME cleanup failed
+  on a busy GVFS mount. That gate remains failed, with artifacts retained;
+  fix lifecycle isolation rather than ignore cleanup errors. Preserve
   `origin/fix/789-library-fields` at `63123625` until the replacement is
   verified and merged. `z705` remains partial; A7/A8 are separate.
 - Text preservation `174e/pdps` is qualified against current source. The user
@@ -170,6 +179,9 @@ activation, branch protection, release or publication are authorized by this pla
   with no newline normalization. Native SHA-256 is
   `1bbd268c32a780f2314fb0a280405be92800086ff2ac1a5cf50b15f5ca266398`.
   Exact unchanged text-block acceptance is required, not whole-file identity.
+  Candidate `f993014` passes source review, formatting, focused tests,
+  workspace Clippy and supervised native acceptance in `cmd_f62jiv6ac6xm`.
+  Failing-before and mutation controls run in `cmd_1vxkborslixt`.
 - All four retained Dependabot branches were audited against the parent.
   None is incorporated or demonstrably superseded; preserve them. Findings
   are recorded on existing Kata `f0kv`.
