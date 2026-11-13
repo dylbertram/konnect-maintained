@@ -36,6 +36,7 @@ struct Fixture {
     directory: tempfile::TempDir,
     board: PathBuf,
     log: PathBuf,
+    executable: PathBuf,
     api: McpHandler,
 }
 
@@ -70,6 +71,7 @@ impl Fixture {
             directory,
             board,
             log,
+            executable,
             api,
         }
     }
@@ -199,7 +201,7 @@ async fn served_explicit_layers_keep_order_and_monochrome_option() {
 }
 
 #[tokio::test]
-async fn served_malformed_layers_refuse_before_cli_and_preserve_output() {
+async fn served_schema_rejects_malformed_layers_before_handler() {
     for tool in ["export_pdf", "export_svg"] {
         for (layers, field) in [
             (json!(null), "layers"),
@@ -221,6 +223,50 @@ async fn served_malformed_layers_refuse_before_cli_and_preserve_output() {
             assert_eq!(body["error"]["kind"], "invalid_argument");
             assert_eq!(body["error"]["field"], field);
             assert!(!fixture.log.exists(), "CLI must not run");
+            assert_eq!(std::fs::read_to_string(output).unwrap(), "keep");
+            fixture.assert_board_unchanged();
+        }
+    }
+}
+
+/// Bypass McpHandler's schema validator deliberately. Served calls alone cannot
+/// detect a regression that restores filter_map inside either plot handler.
+#[tokio::test]
+async fn direct_handlers_reject_malformed_layers_without_cli_or_write() {
+    for tool in ["export_pdf", "export_svg"] {
+        for (layers, field) in [
+            (json!(null), "layers"),
+            (json!("F.Cu"), "layers"),
+            (json!({}), "layers"),
+            (json!(["F.Cu", 7]), "layers[1]"),
+            (json!([null]), "layers[0]"),
+        ] {
+            let fixture = Fixture::new().await;
+            let output = fixture.output("direct-sentinel");
+            std::fs::write(&output, "keep").unwrap();
+            let ctx = ToolContext::new(
+                crate::tools::ServerConfig {
+                    kicad_cli: fixture.executable.to_str().unwrap().into(),
+                    ipc_address: String::new(),
+                    ..Default::default()
+                },
+                std::sync::Arc::new(crate::router::ToolRouter::new()),
+            );
+            let args = json!({"board":fixture.board,"output":output,"layers":layers});
+            let result = if tool == "export_pdf" {
+                handle_export_pdf(&args, &ctx).await
+            } else {
+                handle_export_svg(&args, &ctx).await
+            }
+            .expect("malformed layers return a structured refusal");
+            assert!(result.is_error, "{tool} must refuse malformed layers");
+            let crate::mcp::protocol::ToolContent::Text { text } = &result.content[0] else {
+                panic!("expected structured text error");
+            };
+            let body: Value = serde_json::from_str(text).unwrap();
+            assert_eq!(body["error"]["kind"], "invalid_argument");
+            assert_eq!(body["error"]["field"], field);
+            assert!(!fixture.log.exists(), "handler must not invoke CLI");
             assert_eq!(std::fs::read_to_string(output).unwrap(), "keep");
             fixture.assert_board_unchanged();
         }
@@ -337,17 +383,45 @@ async fn served_explicit_schematic_keeps_kicad_dispatch_but_refuses_ipc() {
     );
 }
 
-async fn native_output(program: &str, args: &[&str]) -> std::process::Output {
-    tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        tokio::process::Command::new(program)
-            .args(args)
-            .kill_on_drop(true)
-            .output(),
+fn native_supervisor(directory: &Path, program: &str, seconds: u32) -> PathBuf {
+    assert!(
+        cfg!(target_os = "linux"),
+        "native export acceptance supervision is supported on Linux only"
+    );
+    let wrapper = directory.join(format!("supervisor-{}.py", uuid::Uuid::new_v4()));
+    std::fs::write(
+        &wrapper,
+        include_str!("../../tests/support/pcb_export_supervisor.py"),
     )
-    .await
-    .expect("native command exceeded 60 seconds")
-    .unwrap_or_else(|error| panic!("cannot execute {program}: {error}"))
+    .unwrap();
+    std::fs::write(
+        wrapper.with_extension("json"),
+        serde_json::to_vec(&json!({
+            "program": program,
+            "seconds": seconds,
+            "audit": wrapper.with_extension("audit"),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    wrapper
+}
+
+/// `program` is always a native_supervisor wrapper, including Poppler controls.
+/// Do not kill the supervisor when this future is dropped. It owns the native
+/// process group's independent deadline and reaps it even after cancellation.
+async fn native_output(program: &str, args: &[&str]) -> std::process::Output {
+    tokio::process::Command::new(program)
+        .args(args)
+        .kill_on_drop(false)
+        .output()
+        .await
+        .unwrap_or_else(|error| panic!("cannot execute {program}: {error}"))
 }
 
 async fn native_command(program: &str, args: &[&str]) -> std::process::Output {
@@ -359,6 +433,141 @@ async fn native_command(program: &str, args: &[&str]) -> std::process::Output {
         String::from_utf8_lossy(&output.stderr)
     );
     output
+}
+
+fn hanging_native_stub(directory: &Path) -> PathBuf {
+    let program = directory.join("hanging-native.py");
+    std::fs::write(
+        &program,
+        "#!/usr/bin/env python3\n\
+         import json, os, signal, subprocess, sys, time\n\
+         from pathlib import Path\n\
+         signal.signal(signal.SIGTERM, signal.SIG_IGN)\n\
+         child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(5)'])\n\
+         marker = Path(__file__).with_suffix('.pids.tmp')\n\
+         marker.write_text(json.dumps([os.getpid(), child.pid]))\n\
+         marker.replace(Path(__file__).with_suffix('.pids.json'))\n\
+         time.sleep(5)\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    program
+}
+
+/// Observation only, not the process-lifetime mechanism. Even a failed control
+/// stub self-exits after five seconds; the supervisor owns the two-second kill.
+async fn wait_for_test_file(path: &Path) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !path.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no lifecycle evidence at {}", path.display()));
+}
+
+async fn assert_supervisor_cleanup(wrapper: &Path, stub: &Path) {
+    let pids_path = stub.with_extension("pids.json");
+    wait_for_test_file(&pids_path).await;
+    let pids: Vec<u32> =
+        serde_json::from_slice(&std::fs::read(&pids_path).unwrap()).unwrap();
+    let audit = wrapper.with_extension("audit");
+    let invocation = std::fs::read_dir(audit)
+        .unwrap()
+        .next()
+        .expect("supervisor invocation")
+        .unwrap()
+        .path();
+    let finished = invocation.join("finished.json");
+    wait_for_test_file(&finished).await;
+    let finished: Value =
+        serde_json::from_slice(&std::fs::read(finished).unwrap()).unwrap();
+    assert_eq!(finished["timed_out"], true);
+    assert_eq!(finished["status"], -9, "native leader must be killed");
+    assert_eq!(finished["group_reaped"], true);
+    assert!(
+        finished["descendants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|child| child["pid"] == pids[1] && child["status"] == -9),
+        "native descendant must be killed and reaped, not left to finish naturally"
+    );
+    for pid in pids {
+        assert!(
+            !Path::new(&format!("/proc/{pid}")).exists(),
+            "test-owned native process {pid} remains after supervisor cleanup"
+        );
+    }
+    // A dropped tools/call future must not leave the supervisor running either.
+    let supervisor = finished["supervisor"].as_u64().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while Path::new(&format!("/proc/{supervisor}")).exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("supervisor must exit and be reaped after cleanup");
+}
+
+#[tokio::test]
+#[ignore = "requires Linux and Python 3; coordinator must admit lifecycle subprocess tests"]
+async fn native_supervisor_terminates_direct_and_served_children() {
+    for served in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let stub = hanging_native_stub(directory.path());
+        let wrapper = native_supervisor(directory.path(), stub.to_str().unwrap(), 2);
+        if served {
+            let api = handler(wrapper.to_str().unwrap()).await;
+            let board = directory.path().join("board.kicad_pcb");
+            std::fs::write(&board, BOARD).unwrap();
+            let output = directory.path().join("refused.ipc");
+            let (failed, body) = call(
+                &api,
+                "export_netlist",
+                json!({"board":board,"output":output,"format":"ipc"}),
+            )
+            .await;
+            assert!(failed, "{body}");
+            assert!(body.to_string().contains("child runtime limit exceeded"));
+            assert!(!output.exists());
+            assert_eq!(std::fs::read_to_string(board).unwrap(), BOARD);
+        } else {
+            let result = native_output(wrapper.to_str().unwrap(), &[]).await;
+            assert_eq!(result.status.code(), Some(124));
+        }
+        assert_supervisor_cleanup(&wrapper, &stub).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Linux and Python 3; coordinator must admit lifecycle subprocess tests"]
+async fn native_supervisor_survives_cancelled_served_call() {
+    let directory = tempfile::tempdir().unwrap();
+    let stub = hanging_native_stub(directory.path());
+    let wrapper = native_supervisor(directory.path(), stub.to_str().unwrap(), 2);
+    let api = handler(wrapper.to_str().unwrap()).await;
+    let board = directory.path().join("board.kicad_pcb");
+    std::fs::write(&board, BOARD).unwrap();
+    let output = directory.path().join("cancelled.ipc");
+    let mut request = Box::pin(call(
+        &api,
+        "export_netlist",
+        json!({"board":board,"output":output,"format":"ipc"}),
+    ));
+    let pids = stub.with_extension("pids.json");
+    tokio::select! {
+        result = &mut request => panic!("expected a still-running native child: {result:?}"),
+        _ = wait_for_test_file(&pids) => {}
+    }
+    drop(request);
+    assert_supervisor_cleanup(&wrapper, &stub).await;
+    assert!(!output.exists());
+    assert_eq!(std::fs::read_to_string(board).unwrap(), BOARD);
 }
 
 /// IPC-D-356 has fixed-width fields. Ignore comments and coordinates, but require
@@ -400,8 +609,13 @@ fn svg_pixels(path: &Path) -> Vec<u8> {
 }
 
 async fn pdf_pixels(path: &Path, prefix: &Path) -> Vec<u8> {
-    let info = native_command(
+    let info_wrapper = native_supervisor(
+        prefix.parent().unwrap(),
         &std::env::var("KONNECT_TEST_PDFINFO").unwrap_or_else(|_| "pdfinfo".into()),
+        60,
+    );
+    let info = native_command(
+        info_wrapper.to_str().unwrap(),
         &[path.to_str().unwrap()],
     )
     .await;
@@ -411,8 +625,13 @@ async fn pdf_pixels(path: &Path, prefix: &Path) -> Vec<u8> {
         .find_map(|line| line.strip_prefix("Pages:"))
         .expect("pdfinfo must report the page count");
     assert_eq!(pages.trim(), "1", "{info}");
-    native_command(
+    let raster_wrapper = native_supervisor(
+        prefix.parent().unwrap(),
         &std::env::var("KONNECT_TEST_PDFTOPPM").unwrap_or_else(|_| "pdftoppm".into()),
+        60,
+    );
+    native_command(
+        raster_wrapper.to_str().unwrap(),
         &[
             "-f",
             "1",
@@ -434,10 +653,13 @@ async fn pdf_pixels(path: &Path, prefix: &Path) -> Vec<u8> {
 /// missing; it never silently skips, installs tools, upgrades CAD or opens PCB
 /// Editor. All commands read disposable copies of committed native fixtures.
 #[tokio::test]
-#[ignore = "requires KiCad 10 CLI, pdfinfo and pdftoppm; coordinator must admit execution"]
+#[ignore = "requires Linux, Python 3, KiCad 10 CLI and Poppler; coordinator must admit execution"]
 async fn native_pcb_export_artifact_acceptance() {
-    let cli = std::env::var("KONNECT_TEST_KICAD_CLI")
+    let real_cli = std::env::var("KONNECT_TEST_KICAD_CLI")
         .expect("KONNECT_TEST_KICAD_CLI must name the real KiCad 10 CLI");
+    let directory = tempfile::tempdir().unwrap();
+    let wrapper = native_supervisor(directory.path(), &real_cli, 60);
+    let cli = wrapper.to_str().unwrap().to_string();
     let version = native_command(&cli, &["--version"]).await;
     let version = String::from_utf8(version.stdout).unwrap();
     assert!(
@@ -445,7 +667,6 @@ async fn native_pcb_export_artifact_acceptance() {
         "require KiCad 10: {version}"
     );
     eprintln!("Native PCB export acceptance: {}", version.trim());
-    let directory = tempfile::tempdir().unwrap();
     let board = directory.path().join("native.kicad_pcb");
     std::fs::write(&board, BOARD).unwrap();
     let api = handler(&cli).await;
