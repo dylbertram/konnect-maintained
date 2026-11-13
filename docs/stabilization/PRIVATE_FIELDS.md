@@ -82,10 +82,12 @@ KiCad would rightly reject the synthetic unknown child, so it is used only
 for the preservation tests, not the native input.
 
 With `KONNECT_TEST_NATIVE_ARTIFACT_DIR` set, the test copies the native CLI's
-output bytes and a provenance JSON with version, command and input/output
-SHA-256 hashes into that directory. This happens before Konnect's move.
-Retrieve those two artifacts from the admitted job; they are the native
-capture, not the generated input.
+output bytes and a provenance JSON with version, command, the base-fixture
+SHA-256 and the native-output SHA-256 into that directory. It does not record
+the prepared synthetic input's hash. This happens before Konnect's move.
+Retrieve `private_fields_native.kicad_sch` and
+`private_fields_native.provenance.json` from the admitted job; they describe
+the native capture, not a captured or hashed prepared input.
 
 No native execution or new native capture has happened in this child session.
 The coordinator must admit and run the native case, and retain its output or
@@ -158,6 +160,48 @@ then be absent from the positive snapshot.
 
 No negative control was executed in this child session. Record exact remote
 job IDs, commands and logs at coordinator verification.
+
+### Coordinator-only runner
+
+Run only in the coordinator's capacity-admitted disposable Linux worker, with
+exclusive source ownership and dependencies/toolchain already provisioned.
+The admission flag is an explicit acknowledgement, not a capacity check or
+permission to run locally. This runner has not been executed here.
+
+```sh
+python3 crates/konnect-core/tests/private_field_controls.py all --coordinator-admitted --output-dir private-field-controls
+```
+
+The five controls are `wrong-parse`, `writer-flag-loss`, `wrong-binding`,
+`quoted-name-confusion` and `ordinary-only-setter`. A single control name can
+replace `all`. The runner pins the reviewed production, regression and fixture
+bytes from `90b9bc4` with SHA-256 preconditions, then requires unique source
+snippets within exact function boundaries. Source changes require a separate
+runner review and updated preconditions, not an automatic hash refresh.
+
+Only six exact focused model/served regressions are eligible. For `all`, it
+runs six positive prerequisites, nine expected-failure invocations and six
+restored positives. It requires the exact named test failure, one-test harness
+summary and exit 101; compiler/build failures, missing tests, timeouts and log
+overflow fail the runner rather than count as reproduction. Cargo runs with
+`--locked --offline`; missing provisioned dependencies fail the prerequisite.
+No native test, fixture capture, whole workspace test or dependency install is
+invoked.
+
+Each command defaults to 120 seconds, with a 180-second maximum. The work
+phase is capped at 360 seconds, with a separate 180-second recovery budget.
+Each invocation is aborted if its log exceeds 4 MiB, checked every 100 ms.
+Owned Cargo/test process groups are terminated on completion or failure before
+restoring the two mutable source files byte-for-byte in `finally`. All six
+protected inputs are compared after
+restoration, and focused positives run again even after a control error.
+Catchable interrupts take the cleanup path; SIGKILL, worker loss or a second
+interrupt during cleanup cannot guarantee restoration. Discard the disposable
+worker on any uncertain cleanup. The runner never resets Git or edits CAD.
+
+Retrieve `private-field-controls/*.log` separately from the native artifacts.
+The runner and this documentation correction are test infrastructure only;
+they do not change the reviewed production implementation.
 
 ## Limits
 
