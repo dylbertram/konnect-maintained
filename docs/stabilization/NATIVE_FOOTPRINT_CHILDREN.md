@@ -15,16 +15,19 @@ some sync updates. That does not establish support for every native child.
 
 Library refresh validates the input library's children. It did not establish
 whether the placed instance owns unsupported native children before replacing
-it. The vendored FootprintInstance schema has no variant field 20. A raw
-KiCad 10.0.8 capture is still required for this child to independently establish
-group omission, point Any serialization and variant field 20 behavior.
+it. The vendored FootprintInstance schema has no variant field 20.
+Coordinator `02324668` captures now establish group omission, point Any
+serialization and variant field 20 observations on native KiCad 10.0.8.
+The refresh blocker below still prevents full native acceptance.
 
 Independent review of `fbb1d5d` blocked native execution. Its A8 helper called
 the field module's `save_native` without initializing that module's pcbnew
 global, and its raw field 20 evidence counted tags without decoding a variant
 name. The follow-up uses its own isolated local pcbnew import for SaveBoard
-and a pinned-schema, test-only raw variant decoder. These corrections have
-not been executed. The accepted field helper and NativeRun are unchanged.
+and a pinned-schema, test-only raw variant decoder. These were source-only
+corrections at that review; the later coordinator `02324668` capture results
+and refresh blocker are recorded below. The accepted field helper and
+NativeRun are unchanged.
 
 Coordinator format-only preflight `cmd_lyucyx067lyx` exited 1 on the source
 snapshot including the in-progress native fixes. The full rustfmt diff was
@@ -170,6 +173,26 @@ worker's installed
 The coordinator owns inspection of the attempt's retained lifecycle evidence.
 The failed attempt is not a passing native gate, and the amended helper has
 not been executed here.
+
+The coordinator's native `02324668` run passed the raw captures and produced
+the expected A8 sync dry-run/apply diagnostics, but refresh preflight stopped
+at unrelated `unsupported_library_footprint` point policy. Its library-control
+report had `removed_native_library_points=[]`: `FOOTPRINT.GraphicalItems()`
+does not enumerate the separate native point container. The coordinator
+qualified `FOOTPRINT.Points() -> PCB_POINTS` in installed 10.0.8 SWIG source
+around lines 23188-23193 and `RemoveNative(BOARD_ITEM, REMOVE_MODE=NORMAL)`
+around lines 23129-23131.
+
+The helper now uses only `list(fp.Points())` and `fp.RemoveNative(point)` on
+the project-local library copy. It requires exactly one original SafeDIP point,
+zero SafeR points and an empty `Points()` container after removal in each copy.
+There is no fallback, CAD text edit or relaxation of library-input policy.
+Placed U1 children, imported fixture bytes and the raw/refusal checks are
+unchanged. Coordinator-retained evidence is
+`.remote-build-jobs/boat-native-children-verification/a8-final-native-evidence.tar.gz`;
+the coordinator reports lifecycle and independent root-absence checks passed.
+Those actual three-kind serialization observations and sync diagnostics are
+not full native acceptance. This narrow helper correction has not been run.
 
 The helper imports the fixture verbatim. A disposable accepted copy changes
 only through native pcbnew or public Konnect. A project-local native library

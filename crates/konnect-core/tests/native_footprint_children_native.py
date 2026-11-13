@@ -306,9 +306,9 @@ def main():
             library = project / "A8.pretty"
             writer.CreateLibrary(str(library))
             library_controls = []
-            for name, directory, entry in [
-                ("SafeDIP", "Package_DIP.pretty", "DIP-8_W7.62mm"),
-                ("SafeR", "Resistor_SMD.pretty", "R_0603_1608Metric"),
+            for name, directory, entry, expected_points in [
+                ("SafeDIP", "Package_DIP.pretty", "DIP-8_W7.62mm", 1),
+                ("SafeR", "Resistor_SMD.pretty", "R_0603_1608Metric", 0),
             ]:
                 fp = pcbnew.FootprintLoad(str(Path("/usr/share/kicad/footprints") / directory), entry)
                 assert fp is not None, entry
@@ -316,10 +316,14 @@ def main():
                 # The stock DIP library itself owns a point. Remove it in a
                 # native library copy so library-input policy cannot mask the
                 # placed-instance gate. Never remove children from placed U1.
-                for drawing in list(fp.GraphicalItems()):
-                    if "POINT" in drawing.GetClass().upper():
-                        removed.append(drawing.GetClass())
-                        fp.Remove(drawing)
+                # KiCad 10.0.8 keeps points in a separate native container,
+                # not GraphicalItems(). Use the qualified native API directly.
+                points = list(fp.Points())
+                assert len(points) == expected_points, (name, len(points), expected_points)
+                for point in points:
+                    removed.append(point.GetClass())
+                    fp.RemoveNative(point)
+                assert not list(fp.Points()), f"{name}: native library points remain"
                 fp.SetFPID(pcbnew.LIB_ID("A8", name))
                 fp.SetLibDescription("a8 native library replacement")
                 writer.FootprintSave(str(library), fp)
