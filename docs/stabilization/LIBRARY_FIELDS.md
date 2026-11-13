@@ -11,6 +11,34 @@ repair/install of Rust 1.96.0. This was not an admitted build/test setup; no
 further local toolchain commands were run. The coordinator should account for
 that host-side effect rather than treating this as installation-free work.
 
+## Corrections to the unapproved first commit
+
+Independent review rejected `95e9d23` for two issues. Runtime gates must use
+the corrected child, not that first commit:
+
+- Readback compared message presence for angle/thickness. In KiCad 10.0.5,
+  [`EDA_TEXT::Deserialize`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/common/eda_text.cpp#L208-L249)
+  reads `angle().value_degrees()` and `stroke_width().value_nm()`, including their
+  protobuf zero defaults. [`Serialize`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/common/eda_text.cpp#L174-L205)
+  always materializes those messages. `FieldShape` now compares their values,
+  with absent equal to zero. It does not ignore a nonzero thickness difference.
+  A served fallback case rewrites outgoing absent widths to explicit zero
+  messages, asserts the serialized response differs from the sent message and
+  requires no spurious readback diagnostic. A separate omitted-angle shape
+  check and nonzero-to-missing/nonzero-to-different-width losses remain covered.
+- The native helper used `SetOrientationDegrees`, which is not a whole-footprint
+  editor rotation. In
+  [`FOOTPRINT::Rotate`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/footprint.cpp#L2900-L2920),
+  KiCad sets orientation and then calls `KeepUpright` on its fields.
+  [`SetOrientation`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/footprint.cpp#L3101-L3127)
+  rotates children without that final step.
+  [`PCB_TEXT::KeepUpright`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/pcb_text.cpp#L374-L392)
+  returns immediately for non-upright text. The helper now invokes the real
+  `FOOTPRINT::Rotate` operation, with no postprocessing of expected field angles.
+
+These are source corrections and proposed controls, not claims of execution.
+No local toolchain commands, builds, tests or jobs were run for this correction.
+
 ## Source review and replacement boundary
 
 The archived #820 record has three discussion comments, zero formal reviews and
@@ -69,7 +97,9 @@ the transformed raw angle is reduced by full turns only.
 
 Sync readback queries the live document after commit. It compares every sent
 field by name, text, layer, visibility, keep-upright, raw angle modulo a full turn
-and thickness in nanometres. It does not compare only the outgoing message.
+and thickness in nanometres. Absent angle/width messages equal their protobuf
+zero values; a nonzero value does not equal absence. It does not compare only
+the outgoing message.
 A mismatch is `board_readback_differs` after applied work, never a rollback
 claim. Extra mandatory fields KiCad creates are ignored. This does not claim
 complete font/style/position readback. Refresh still has no production
@@ -104,8 +134,9 @@ The focused assertions cover:
 - native-base Reference/Value layers, thickness, visibility and custom fields;
 - absent/no/yes unlocked clauses, invalid and repeated clauses, locked refusal;
 - served sync dry run/apply, raw 180°, schematic text and hidden custom fields;
-- six separately corrupted readbacks: custom omission, layer, visibility,
-  upright, angle and thickness;
+- a non-echo canonicalized-default readback that must succeed;
+- independently corrupted readbacks: custom omission, layer, visibility,
+  upright, angle, changed nonzero thickness and missing nonzero thickness;
 - unsupported **hidden** property, repeated-name and partial-mandatory-field
   apply with diagnostic, not just plan readiness;
 - visible-field no-double-drawing and fallback drawing;
@@ -118,8 +149,8 @@ regressions, finally-restored exact bytes, then a restored positive gate.
 Compile failure is not accepted as evidence. Controls cover unconditional
 folding, removing upright folding, always-off keep-upright, locked fields,
 skipped field adoption, double drawing, missing fallback diagnostic, ignoring
-raw angle, ignoring thickness and losing apply staging. Its expected assertions
-have not been executed here.
+raw angle, ignoring thickness, mistaking absent default messages for changes
+and losing apply staging. Its expected assertions have not been executed here.
 
 ## Native capture
 
@@ -134,16 +165,44 @@ binary, installed libraries/templates, PCB Editor and Xvfb. Missing prerequisite
 fail rather than skip. No packages are installed by the script.
 
 The helper loads the existing native socket through `pcbnew.FootprintLoad`,
-authors three library variants through the native model and `FootprintSave`,
+authors four library variants through the native model and `FootprintSave`,
 then registers their project-local library through the public Konnect tool.
 Its visible custom field also checks for duplicate ordinary-text drawings.
 It creates a new synthetic project through public tools. The live sync runs
 through stdio MCP with real `kicad-cli` and the helper's own headless PCB Editor.
-`save_project` saves the native result.
+`save_project` saves the native result. `FallbackLocked` is authored by setting
+the hidden generator field's native lock and saving it with KiCad. It must
+produce exactly the named fallback diagnostic for R903, with no additional
+`board_readback_differs` from the template's omitted widths. Its saved fields
+are captured separately; template fallback is not claimed as library fidelity.
 
-Native controls independently place the same libraries through pcbnew's model.
-Six refresh controls include both reported angle cases, both sides and upright
-controls. A changed custom value forces refresh without claiming no-op
+The native control operation is explicit: load a front-side library footprint
+at orientation zero, add it to a native board, translate it to its anchor,
+optionally call native `Flip(anchor, False)`, retaining the existing helper's
+flip operation, then call
+`Rotate(anchor, EDA_ANGLE(target - current_orientation, DEGREES_T))`.
+This represents a whole-footprint placement/rotation action, not raw setter
+semantics and not KiCad's complete Update Footprints from Library command.
+
+The six refresh cases are Raw180/front/0°, Raw0/front/180°, Raw0/back/0°,
+Raw180/back/180°, Upright0/front/180° and Upright0/back/180°.
+The back upright case targets 180° too, instead of flip-only back/0°. The
+rotation delta uses KiCad's orientation after the flip. Rotate by zero returns
+immediately, and the helper does not claim that arbitrary raw setters or
+flip-only raw storage match the retained readable-angle policy. It does not
+add a corrective field edit or rotate-and-undo sequence to its expected artifact.
+
+Before any production field comparison, `native-operation-control.kicad_pcb`
+and its JSON capture distinguish the operations on unmodified native results.
+R920 uses whole-footprint Rotate 180° on Upright0; R921 uses the raw orientation
+setter to 180° on the same library. R920's raw field angles must be 0° and R921's
+180°. R922 rotates Raw0 to 180° and R923 leaves Raw180 at footprint 0°; both
+must retain raw 180° and keep-upright false. These native-only assertions are
+independent of production transforms. Replacing the helper's Rotate with the
+old orientation setter must fail the R920 contract assertion, not be repaired
+by folding the captured expected fields.
+
+A changed custom value forces refresh without claiming no-op
 convergence. Native-saved results are reloaded and compared field by field,
 including raw angle, thickness, side, visibility, upright and position.
 Sync must also return no field-readback diagnostics from the actual IPC query.
@@ -186,12 +245,15 @@ tar -czf target/a6-native-evidence.tar.gz target/a6-native target/a6-supervisor/
 
 Request artifact `target/a6-native-evidence.tar.gz`. Key contents:
 
-- `native-fields.json`, including version, supplied revision and pass/incomplete;
+- `native-fields.json`, including version, supplied revision, operation and
+  passed/failed/incomplete status;
+- `native-operation-control.kicad_pcb` and `native-operation-control.json`;
+- `fallback-native-fields.json`;
 - `served-responses.json`, `konnect.log` and both editor logs;
 - `sync-native-saved.kicad_pcb` and `sync-native-control.kicad_pcb`;
 - `refresh-native-before.kicad_pcb`, `refresh-native-saved.kicad_pcb` and
   `refresh-native-control.kicad_pcb`;
-- the three native `project/A6.pretty/*.kicad_mod` files;
+- the four native `project/A6.pretty/*.kicad_mod` files;
 - supervisor started/finished audit records.
 
 No native capture is committed or claimed yet. Review artifact provenance and

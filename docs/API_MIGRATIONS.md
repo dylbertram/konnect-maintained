@@ -25,6 +25,9 @@ Non-upright field angles retain their full-turn-normalized raw angle, including
 After a sync commit, `board_readback_differs` also reports lost or changed sent
 fields, including raw angle and thickness returned by live KiCad. It is a
 post-commit diagnostic, not a claim that the mutation was rolled back.
+An omitted angle or stroke-width message compares as its protobuf zero value,
+not as a loss when KiCad materializes the default. Nonzero thickness changes
+remain observable.
 
 This does not adopt library presentation for direct `place_component`, reset
 placed Reference/Value during refresh, propagate schematic custom fields or

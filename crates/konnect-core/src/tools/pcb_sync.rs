@@ -1340,8 +1340,8 @@ struct FieldShape {
     layer: i32,
     visible: bool,
     upright: bool,
-    angle: Option<f64>,
-    thickness_nm: Option<i64>,
+    angle: f64,
+    thickness_nm: i64,
 }
 
 impl FieldShape {
@@ -1365,10 +1365,12 @@ impl FieldShape {
             upright: attributes.is_some_and(|attributes| attributes.keep_upright),
             angle: attributes
                 .and_then(|attributes| attributes.angle.as_ref())
-                .map(|angle| angle.value_degrees.rem_euclid(360.0)),
+                .map_or(0.0, |angle| angle.value_degrees.rem_euclid(360.0)),
+            // EDA_TEXT::Deserialize reads an absent Distance as zero;
+            // Serialize always emits that Distance. Presence is not a change.
             thickness_nm: attributes
                 .and_then(|attributes| attributes.stroke_width.as_ref())
-                .map(|width| width.value_nm),
+                .map_or(0, |width| width.value_nm),
         }
     }
 }
@@ -4954,6 +4956,8 @@ mod tests {
     enum Readback {
         /// Exactly what was sent, as a KiCad that kept everything does.
         AsSent,
+        /// Native EDA_TEXT serialization materializes default-valued messages.
+        CanonicalTextDefaults,
         /// What was sent without the instance attributes and 3D models: the
         /// board the sync built before #789.
         WithoutLibraryData,
@@ -5269,6 +5273,36 @@ mod tests {
     fn read_back(item: &prost_types::Any, readback: Readback) -> prost_types::Any {
         match readback {
             Readback::AsSent => item.clone(),
+            Readback::CanonicalTextDefaults => {
+                let mut footprint =
+                    konnect_ipc::gen::kiapi::board::types::FootprintInstance::decode(
+                        item.value.as_slice(),
+                    )
+                    .unwrap();
+                for field in [
+                    &mut footprint.reference_field,
+                    &mut footprint.value_field,
+                    &mut footprint.datasheet_field,
+                    &mut footprint.description_field,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let attributes = field
+                        .text
+                        .as_mut()
+                        .unwrap()
+                        .text
+                        .as_mut()
+                        .unwrap()
+                        .attributes
+                        .as_mut()
+                        .unwrap();
+                    attributes.stroke_width.get_or_insert_with(Default::default);
+                    attributes.angle.get_or_insert_with(Default::default);
+                }
+                konnect_ipc::builders::pack_any(&footprint, "kiapi.board.types.FootprintInstance")
+            }
             Readback::WithoutLibraryData => {
                 let mut footprint =
                     konnect_ipc::gen::kiapi::board::types::FootprintInstance::decode(
@@ -5351,6 +5385,15 @@ mod tests {
                                 .unwrap()
                                 .value_nm = 10_000
                         }
+                        "thickness_missing" => {
+                            text.text
+                                .as_mut()
+                                .unwrap()
+                                .attributes
+                                .as_mut()
+                                .unwrap()
+                                .stroke_width = None
+                        }
                         _ => panic!("unknown field loss {loss}"),
                     }
                 }
@@ -5380,9 +5423,9 @@ mod tests {
         let sent = &served.sent_footprints()[0];
         let reference = FieldShape::of(sent.reference_field.as_ref().unwrap());
         assert_eq!(reference.text, "C1");
-        assert_eq!(reference.angle, Some(180.0));
+        assert_eq!(reference.angle, 180.0);
         assert!(!reference.upright);
-        assert_eq!(reference.thickness_nm, Some(150_000));
+        assert_eq!(reference.thickness_nm, 150_000);
         let value = FieldShape::of(sent.value_field.as_ref().unwrap());
         assert_eq!(value.layer, BoardLayer::BlFFab as i32);
         assert!(value.visible);
@@ -5411,6 +5454,7 @@ mod tests {
             "upright",
             "angle",
             "thickness",
+            "thickness_missing",
         ] {
             let served = ServedSync::reading_back(Readback::FieldLoss(loss)).await;
             let applied = served
@@ -5431,6 +5475,69 @@ mod tests {
             );
             assert!(message.contains("board now has"), "{message}");
         }
+    }
+
+    #[tokio::test]
+    async fn a6_canonicalized_fallback_readback_is_not_a_field_loss() {
+        use konnect_ipc::gen::kiapi::board::types::FootprintInstance;
+
+        let served = ServedSync::reading_back(Readback::CanonicalTextDefaults).await;
+        let library = served
+            .board
+            .parent()
+            .unwrap()
+            .join("Capacitor_SMD.pretty/C_0603_1608Metric.kicad_mod");
+        let source = std::fs::read_to_string(&library).unwrap();
+        let unsupported = source.replacen("(hide yes)", "(hide yes) (future_clause yes)", 1);
+        std::fs::write(library, unsupported).unwrap();
+        let applied = served
+            .apply(&exported_netlist(&[("C1", STOCK_0603, &["1", "2"])]))
+            .await;
+        assert_eq!(applied["status"], "applied", "{applied:#}");
+        let diagnostics = applied["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1, "{applied:#}");
+        assert_eq!(diagnostics[0]["code"], "library_fields_not_carried");
+        let sent = served.created.lock().unwrap()[0].clone();
+        let kept = read_back(&sent, Readback::CanonicalTextDefaults);
+        assert_ne!(sent, kept, "the canonicalizing mock must not echo the message");
+        let sent = FootprintInstance::decode(sent.value.as_slice()).unwrap();
+        let kept = FootprintInstance::decode(kept.value.as_slice()).unwrap();
+        let mut field = sent.value_field.unwrap();
+        let attrs = field
+            .text
+            .as_mut()
+            .unwrap()
+            .text
+            .as_mut()
+            .unwrap()
+            .attributes
+            .as_mut()
+            .unwrap();
+        assert!(
+            attrs.stroke_width.is_none(),
+            "fallback must exercise absent thickness"
+        );
+        attrs.angle = None;
+        let kept = kept.value_field.unwrap();
+        let kept_attributes = kept
+            .text
+            .as_ref()
+            .unwrap()
+            .text
+            .as_ref()
+            .unwrap()
+            .attributes
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            kept_attributes.stroke_width.as_ref().unwrap().value_nm,
+            0
+        );
+        let absent = FieldShape::of(&field);
+        let canonical = FieldShape::of(&kept);
+        assert_eq!(absent.angle, 0.0);
+        assert_eq!(absent.thickness_nm, 0);
+        assert!(absent.matches(&canonical));
     }
 
     #[tokio::test]

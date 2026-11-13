@@ -35,8 +35,7 @@ def fields(footprint):
         }
         for field in footprint.GetFields()
     }
-    assert {"Reference", "Value", "Datasheet", "Description",
-            "KiLib_Generator", "AssemblyVendor"} <= result.keys(), result
+    assert {"Reference", "Value", "Datasheet", "Description"} <= result.keys(), result
     return result
 
 
@@ -184,8 +183,44 @@ def native_footprint(library, name, board, ref, value, position, rotation=0, bac
     fp.SetPosition(position)
     if back:
         fp.Flip(position, False)
-    fp.SetOrientationDegrees(rotation)
+    # A whole-footprint editor rotation, not the lower-level orientation setter.
+    # FOOTPRINT::Rotate invokes KeepUpright on fields after SetOrientation;
+    # SetOrientationDegrees alone deliberately leaves their raw angles alone.
+    delta = rotation - fp.GetOrientationDegrees()
+    fp.Rotate(position, pcbnew.EDA_ANGLE(delta, pcbnew.DEGREES_T))
+    assert abs((fp.GetOrientationDegrees() - rotation + 180) % 360 - 180) < 0.000001
     return fp
+
+
+def native_operation_control(library, out):
+    """Capture Rotate vs raw setter before testing any production field result."""
+    board = pcbnew.BOARD()
+    origin = pcbnew.VECTOR2I(pcbnew.FromMM(40), pcbnew.FromMM(40))
+    native_footprint(library, "Upright0", board, "R920", "native-rotate",
+                     origin, rotation=180)
+    setter = native_footprint(library, "Upright0", board, "R921", "native-setter",
+                              origin)
+    # Deliberately different native operation, retained as a negative control.
+    # Its raw 180° fields must not become the whole-footprint Rotate oracle.
+    setter.SetOrientationDegrees(180)
+    native_footprint(library, "Raw0", board, "R922", "native-raw-rotate",
+                     origin, rotation=180)
+    native_footprint(library, "Raw180", board, "R923", "native-raw-local",
+                     origin)
+    path = out / "native-operation-control.kicad_pcb"
+    save_native(path, board)
+    observed = inspect(path)
+    (out / "native-operation-control.json").write_text(json.dumps(observed, indent=2))
+    for ref in ["R920", "R921", "R922", "R923"]:
+        assert {"KiLib_Generator", "AssemblyVendor"} <= observed[ref].keys(), observed
+    for name in observed["R920"]:
+        assert observed["R920"][name]["upright"]
+        assert observed["R920"][name]["angle"] == 0, ("native Rotate contract", name, observed)
+        assert observed["R921"][name]["angle"] == 180, ("raw setter control", name, observed)
+        for ref in ["R922", "R923"]:
+            assert not observed[ref][name]["upright"]
+            assert observed[ref][name]["angle"] == 180, ("native non-upright control", ref, name, observed)
+    return observed
 
 
 def main():
@@ -202,7 +237,8 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     report = {"kicad": pcbnew.Version(), "source_revision": args.source_revision,
               "status": "incomplete",
-              "scope": "field-only sync additions and supported scratch refresh"}
+              "scope": "field-only sync additions and supported scratch refresh",
+              "rotation_operation": "FOOTPRINT::Rotate about its own anchor after optional Flip(anchor, False)"}
     api = None
     editor = None
     try:
@@ -245,7 +281,8 @@ def main():
             # through KiCad's model and FootprintSave, never S-expression edits.
             fixture_dir = ROOT / "crates/konnect-core/tests/fixtures"
             for name, angle, upright in [
-                ("Raw180", 180, False), ("Raw0", 0, False), ("Upright0", 0, True)
+                ("Raw180", 180, False), ("Raw0", 0, False),
+                ("Upright0", 0, True), ("FallbackLocked", 0, True),
             ]:
                 fp = pcbnew.FootprintLoad(str(fixture_dir), "socket_kicad10")
                 assert fp is not None
@@ -258,9 +295,15 @@ def main():
                     field.SetTextThickness(pcbnew.FromMM(0.19))
                     if field.GetName() == "AssemblyVendor":
                         field.SetVisible(True)
+                    if name == "FallbackLocked" and field.GetName() == "KiLib_Generator":
+                        # Hidden unsupported property, authored by KiCad itself.
+                        # Sync must take its diagnostic fallback and accept native
+                        # materialization of the template's omitted stroke width.
+                        field.SetLocked(True)
                 assert any(f.GetName() == "AssemblyVendor" for f in fp.GetFields())
                 pcbnew.FootprintSave(str(library), fp)
                 assert (library / f"{name}.kicad_mod").is_file()
+            report["native_operation_control"] = native_operation_control(library, out)
             api.call("register_footprint_library", {
                 "library_path": str(library), "nickname": "A6",
                 "project": str(project / "a6.kicad_pro"),
@@ -269,7 +312,10 @@ def main():
             api.call("batch_place_components", {"schematic": str(schematic), "components": [
                 {"lib_id": "Device:R", "reference": ref, "x": x, "y": 50.8,
                  "footprint": f"A6:{name}", "value": "native-a6"}
-                for ref, name, x in [("R901", "Raw180", 50.8), ("R902", "Upright0", 76.2)]
+                for ref, name, x in [
+                    ("R901", "Raw180", 50.8), ("R902", "Upright0", 76.2),
+                    ("R903", "FallbackLocked", 101.6),
+                ]
             ]})
             board = project / "a6.kicad_pcb"
             save_native(board, pcbnew.BOARD())
@@ -281,28 +327,39 @@ def main():
                 "schematic": str(schematic), "board": str(board),
                 "dry_run": False, "expected_plan_revision": plan["plan_revision"]})
             assert applied["status"] == "applied", applied
-            assert applied["diagnostics"] == [], applied
+            assert len(applied["diagnostics"]) == 1, applied
+            diagnostic = applied["diagnostics"][0]
+            assert diagnostic["code"] == "library_fields_not_carried", applied
+            assert diagnostic["references"] == ["R903"], applied
+            assert diagnostic["footprint_id"] == "A6:FallbackLocked", applied
+            assert "locked" in diagnostic["message"], applied
             api.call("save_project", {})
             stop_editor(editor)
             editor = None
             shutil.copy(board, out / "sync-native-saved.kicad_pcb")
             synced = pcbnew.LoadBoard(str(board))
             placed = {fp.GetReference(): fp for fp in synced.GetFootprints()}
-            assert placed.keys() == {"R901", "R902"}, placed.keys()
+            assert placed.keys() == {"R901", "R902", "R903"}, placed.keys()
             oracle = pcbnew.BOARD()
             for ref, name in [("R901", "Raw180"), ("R902", "Upright0")]:
                 native_footprint(library, name, oracle, ref, "native-a6",
                                  placed[ref].GetPosition())
             save_native(out / "sync-native-control.kicad_pcb", oracle)
-            compare(inspect(board), inspect(out / "sync-native-control.kicad_pcb"))
-            assert ordinary_texts(board) == ordinary_texts(out / "sync-native-control.kicad_pcb")
+            compare({ref: field for ref, field in inspect(board).items() if ref != "R903"},
+                    inspect(out / "sync-native-control.kicad_pcb"))
+            assert {ref: text for ref, text in ordinary_texts(board).items() if ref != "R903"} == ordinary_texts(out / "sync-native-control.kicad_pcb")
+            fallback = fields(placed["R903"])
+            assert fallback["Reference"]["text"] == "R903", fallback
+            assert fallback["Value"]["text"] == "native-a6", fallback
+            assert "KiLib_Generator" not in fallback, fallback
+            (out / "fallback-native-fields.json").write_text(json.dumps(fallback, indent=2))
             # Native placement, rotation and flipping are the refresh oracle.
             refresh = pcbnew.BOARD()
             refs = []
             for index, (name, rotation, back) in enumerate([
                 ("Raw180", 0, False), ("Raw0", 180, False),
                 ("Raw0", 0, True), ("Raw180", 180, True),
-                ("Upright0", 180, False), ("Upright0", 0, True),
+                ("Upright0", 180, False), ("Upright0", 180, True),
             ]):
                 ref = f"R{910 + index}"
                 refs.append(ref)
