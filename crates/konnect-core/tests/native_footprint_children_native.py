@@ -123,6 +123,115 @@ def assert_untouched_raw(before, after, before_dir, after_dir, kiid):
         after_dir / f"item-{new['index']}.any.value").read_bytes()
 
 
+def control_build(args, binary):
+    """Require the isolated build runner's restored-positive provenance."""
+    evidence = json.loads(args.control_build_evidence.read_text())
+    assert evidence["status"] == "passed", evidence
+    assert evidence["source_revision"] == args.source_revision, evidence
+    source = (ROOT / "crates/konnect-core/src/tools/pcb_sync.rs").read_bytes()
+    assert hashlib.sha256(source).hexdigest() == evidence["original_source_sha256"], evidence
+    old = b"&targets, // A8 sync inventory targets"
+    new = b"&[], // A8 sync inventory targets"
+    assert source.count(old) == 1
+    assert hashlib.sha256(source.replace(old, new, 1)).hexdigest() == evidence["control_source_sha256"]
+    control = args.control_konnect.resolve(strict=True)
+    assert control != binary
+    assert hashlib.sha256(binary.read_bytes()).hexdigest() == evidence["restored_binary_sha256"]
+    assert hashlib.sha256(control.read_bytes()).hexdigest() == evidence["control_binary_sha256"]
+    assert evidence["exact_restoration"] and evidence["restored_positive_gate"], evidence
+    return control, evidence
+
+
+def sync_loss_control(api, pcbnew, raw_binary, socket, board, schematic,
+                      out, environment, before, before_dir, proxy_log, report):
+    """Actual maintained sync only. Never inject or re-encode a replacement."""
+    report["unsafe_loss_control"] = {
+        "status": "incomplete", "actual_replacement_proven": False,
+        "zero_mutation_claim": False,
+    }
+    evidence = report["unsafe_loss_control"]
+    # Leave the native-prepared board untouched. Only U1 belongs to this public
+    # scratch schematic; R1/C1 remain board-only, not replacement targets.
+    for ref in ["R1", "C1"]:
+        api.call("delete_schematic_component", {"schematic": str(schematic), "reference": ref})
+    saved_before = pcbnew.LoadBoard(str(board))
+    originals = [fp for fp in saved_before.GetFootprints() if fp.m_Uuid.AsString() == U1]
+    assert len(originals) == 1 and originals[0].GetReference() == "U1"
+    old_value = originals[0].GetValue()
+    desired = "a8 desired value"
+    assert old_value != desired, old_value
+    evidence["disk_value_before"] = old_value
+    start = len(rpc_requests(proxy_log / "rpc.jsonl"))
+    try:
+        arguments = {"schematic": str(schematic), "board": str(board)}
+        plan = api.call("update_pcb_from_schematic", {**arguments, "dry_run": True})
+        evidence["plan"] = plan
+        assert plan["status"] == "ready", plan
+        assert len(plan["changes"]) == 1, plan
+        change = plan["changes"][0]
+        assert (change["kind"], change["reference"], change["kiid"], change["value"]) == (
+            "update", "U1", U1, desired), change
+        assert plan["coverage"]["footprints_updated"] == {"planned": 1, "applied": 0}, plan
+        assert plan["coverage"]["footprints_added"]["planned"] == 0, plan
+        applied = api.call("update_pcb_from_schematic", {
+            **arguments, "dry_run": False, "expected_plan_revision": plan["plan_revision"]})
+        evidence["applied"] = applied
+        assert applied["status"] == "applied", applied
+        assert applied["changes"] == plan["changes"], applied
+        assert applied["coverage"]["footprints_updated"] == {"planned": 1, "applied": 1}, applied
+        assert applied["coverage"]["footprints_added"]["applied"] == 0, applied
+        api.call("save_project", {})
+        after_dir = out / "after-control-sync"
+        after = capture(raw_binary, socket, board, after_dir, environment)
+        shutil.copyfile(board, out / "after-control-sync.kicad_pcb")
+        saved = pcbnew.LoadBoard(str(board))
+        actual = [fp for fp in saved.GetFootprints() if fp.m_Uuid.AsString() == U1]
+        assert len(actual) == 1 and actual[0].GetReference() == "U1"
+        evidence["disk_value_after"] = actual[0].GetValue()
+        assert actual[0].GetValue() == desired, evidence
+        old_raw, new_raw = raw_item(before, U1), raw_item(after, U1)
+        assert (before_dir / f"item-{old_raw['index']}.any.value").read_bytes() != (
+            after_dir / f"item-{new_raw['index']}.any.value").read_bytes()
+        old, new = native_owned(before, U1), native_owned(after, U1)
+        evidence["native_before"] = old
+        evidence["native_after"] = new
+        evidence["raw_before"] = old_raw
+        evidence["raw_after"] = new_raw
+        requests = rpc_requests(proxy_log / "rpc.jsonl")[start:]
+        counts = {}
+        for row in requests:
+            name = row["command"].rsplit(".", 1)[-1]
+            counts[name] = counts.get(name, 0) + 1
+            assert (proxy_log / f"{row['index']:05}.response.pb").is_file(), row
+        evidence["rpc_counts"] = counts
+        assert counts.get("UpdateItems") == 1, counts
+        assert counts.get("BeginCommit") == counts.get("EndCommit") == 1, counts
+        assert counts.get("SaveDocument", 0) >= 1 and not counts.get("RevertDocument"), counts
+        assert not counts.get("CreateItems") and not counts.get("DeleteItems"), counts
+        evidence["actual_replacement_proven"] = True
+        evidence["kinds"] = {
+            kind: {"before": old[kind], "after": new[kind], "lost": new[kind] < old[kind]}
+            for kind in ["group", "point", "variant"]
+        }
+        evidence["variant_names_before"] = old["variant_names"]
+        evidence["variant_names_after"] = new["variant_names"]
+        evidence["kinds"]["variant"]["lost"] = (
+            new["variant"] < old["variant"] or "NoTimer" not in new["variant_names"])
+        assert evidence["kinds"]["group"]["lost"] or evidence["kinds"]["variant"]["lost"], (
+            "Actual U1 replacement produced no group or variant loss; reproduction failed", evidence)
+        evidence["status"] = "reproduced"
+    except BaseException as error:
+        evidence.update(status="failed", error=repr(error))
+        raise
+    finally:
+        requests = rpc_requests(proxy_log / "rpc.jsonl")[start:]
+        evidence["rpc_counts"] = {}
+        for row in requests:
+            name = row["command"].rsplit(".", 1)[-1]
+            evidence["rpc_counts"][name] = evidence["rpc_counts"].get(name, 0) + 1
+        (out / "control-rpcs.json").write_text(json.dumps(requests, indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--disposable-worker", action="store_true", required=True)
@@ -130,7 +239,15 @@ def main():
     parser.add_argument("--capture-helper", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--mode", choices=["refusal", "sync-loss-control"], default="refusal")
+    parser.add_argument("--control-konnect", type=Path)
+    parser.add_argument("--control-build-evidence", type=Path)
     args = parser.parse_args()
+    if args.mode == "sync-loss-control":
+        if not args.control_konnect or not args.control_build_evidence:
+            parser.error("sync-loss-control requires --control-konnect and --control-build-evidence")
+    elif args.control_konnect or args.control_build_evidence:
+        parser.error("control arguments require --mode sync-loss-control")
     assert sys.platform == "linux" and os.environ.get("DISPLAY")
     binary = args.konnect.resolve(strict=True)
     raw_binary = args.capture_helper.resolve(strict=True)
@@ -139,9 +256,14 @@ def main():
     report = {"source_revision": args.source_revision, "status": "incomplete",
               "scope": "bounded native-owned child refusal, not universal metadata preservation",
               "unsafe_loss_control": "not run; no native data-loss assertion is made"}
+    report["mode"] = args.mode
+    served_binary = binary
     api = None
     primary = None
     try:
+        if args.mode == "sync-loss-control":
+            served_binary, report["control_build"] = control_build(args, binary)
+            report["scope"] = "actual native U1 loss control, not refusal or zero-mutation proof"
         fixture = FIXTURES / "footprint_children_kicad10.kicad_pcb"
         assert hashlib.sha256(fixture.read_bytes()).hexdigest() == (
             "44a89de8509f6aade944ee7c4f100960672b6a34c5cfb1aef1997ad9989b73a3")
@@ -240,10 +362,11 @@ def main():
             (out / "setup-served-responses.json").write_text(json.dumps(api.responses, indent=2))
             config.write_text(json.dumps({"kicad_cli": cli, "ipc_address": proxy_socket,
                                           "eager_toolsets": True, "log_level": "warn"}))
-            api = lifecycle.Api(binary, config, environment, out / "guard-konnect.log")
+            api = lifecycle.Api(served_binary, config, environment, out / "guard-konnect.log")
             owner.api = api
             run.checkpoint("instrumented_native_gate")
-            before_dir, after_dir = out / "before-refusal", out / "after-refusal"
+            before_dir = out / ("before-control" if args.mode == "sync-loss-control" else "before-refusal")
+            after_dir = out / "after-refusal"
             before = capture(raw_binary, proxy_socket, board, before_dir, environment)
             assert_owned(before)
             u1raw = raw_item(before, U1)
@@ -252,11 +375,21 @@ def main():
             assert len(u1raw["native_group_kiid_raw_presence"]) == 1, u1raw
             assert not u1raw["native_group_kiid_raw_presence"][0]["utf8_in_raw_value"], u1raw
             assert u1raw["point_any_count"] > 0, u1raw
+            if args.mode == "sync-loss-control":
+                assert any(url.rsplit("/", 1)[-1] == "kiapi.board.types.ReferencePoint"
+                           for url in u1raw["definition_child_type_urls"]), u1raw
             assert u1raw["variant_field_20_occurrences"] > 0, u1raw
             assert len(u1raw["raw_variants"]) == u1raw["variant_field_20_occurrences"], u1raw
             assert [variant["decoded"]["name"] for variant in u1raw["raw_variants"]] == ["NoTimer"], u1raw
             assert u1raw["raw_variants"][0]["decoded"]["do_not_populate"] is True, u1raw
             report["serialization_observations"] = u1raw
+            if args.mode == "sync-loss-control":
+                sync_loss_control(api, pcbnew, raw_binary, proxy_socket, board, schematic,
+                                  out, environment, before, before_dir, proxy_log, report)
+                # NativeRun still closes/audits everything and the outer finally
+                # persists evidence. The default acceptance gate below is unchanged.
+                report["status"] = "passed"
+                return
             disk_before = board.read_bytes()
             start = len(rpc_requests(proxy_log / "rpc.jsonl"))
             for tool in ["update_pcb_from_schematic", "update_footprints_from_library"]:

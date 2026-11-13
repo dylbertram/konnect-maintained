@@ -143,7 +143,7 @@ These commands and test source are not passing results. The child checked
 fixture hashes and `git diff --check` only. Formatting and compilation have
 not been executed here.
 
-## Native gate and raw IPC evidence
+## Safe native gate and raw IPC evidence
 
 `native_footprint_children_native.py` is source for a fresh disposable Linux
 worker with matching 10.0.8 CLI, editor IPC and pcbnew. Missing prerequisites
@@ -180,9 +180,10 @@ The Rust example `native_footprint_children_capture` has two test-only modes:
   DNP/exclusion flags and field overrides are recorded, not inferred from
   native text or a sent replacement.
 - `proxy LISTEN UPSTREAM OUT` forwards exact request/response bytes to the
-  same owned editor. It records each request before forwarding. Guard calls
-  use this proxy, so zero BeginCommit/mutation/save/revert evidence is a
-  recorded RPC observation, not a claim inferred from tool output.
+  same owned editor. It records each request before forwarding. In default
+  refusal mode, guard calls use this proxy, so zero BeginCommit/mutation/save/
+  revert evidence is a recorded observation, not inferred from tool output.
+  The loss control uses the same proxy but must record actual mutations.
 
 Raw protobuf files, full native before/after text and served responses remain
 separate artifacts. The helper checks native U1 ownership of exactly one
@@ -207,10 +208,75 @@ Safe R1 refresh and sync then actually apply and read back natively while
 U1 remains present with its children. The native gate does not exercise every
 synthetic malformed/race case; those are separate served mock gates above.
 
-No unsafe data-loss control runs in this helper and no native loss result is
-claimed. If a causal loss control is needed, admit another disposable copy
-and run the actual maintained whole-footprint replacement path there. Do not
-fabricate an oracle by re-encoding a damaged protobuf or hand-editing CAD.
+The default `--mode refusal` is unchanged. Passing it proves bounded refusal
+and safe R1 application, not the original native loss report. Reviewer
+`ses_e297379b7ffeXjac7g85C2OgQu` requires actual native loss reproduction before
+`3bqz` can close. Neither the helper source nor a passing mock control supplies
+that evidence. No new native loss execution or result is claimed here.
+
+The optional `--mode sync-loss-control` is coordinator-only and requires both
+`--control-konnect` and `--control-build-evidence`. It must run in a separate
+disposable worker invocation, never against a shared editor. It uses the same
+NativeRun, desktop isolation, imported fixture bytes, native-prepared board,
+library preparation, independent capture binary and raw forwarding proxy.
+It checks the same exact U1 native ownership and raw field 20 `NoTimer`/DNP
+evidence before replacement, including an actual ReferencePoint Any.
+
+Setup uses the restored positive binary. Only after setup does the served
+connection switch to the supplied control binary. Public schematic deletion
+leaves only U1 as a sync target; the native-prepared board is not edited to
+manufacture loss. The actual maintained `update_pcb_from_schematic` handler
+must report ready, then apply exactly one U1 update with its returned revision.
+It sends the current whole-footprint update through native IPC, then saves
+through public `save_project`. Independent GetItems/native capture follows.
+pcbnew reloads the saved disk board and must find the same U1 KIID/reference
+with the requested value changed to `a8 desired value`.
+
+The control persists served plans/counts, raw request/response files,
+`control-rpcs.json`, per-command RPC counts, full native before/after captures
+and disk readback. Before attributing loss it requires one applied update,
+one recorded UpdateItems, a completed BeginCommit/EndCommit pair, a public
+SaveDocument, changed U1 raw bytes and the changed saved value. Recovery,
+creation, deletion, a refusal, noop or compile failure cannot satisfy it.
+Only the positive refusal interval makes a zero-mutation claim.
+
+Each of group, point and variant gets its actual native before/after count
+and loss flag. Raw point Any counts and decoded field 20 payloads remain
+separate observations, as do variant names. The gate requires observed native
+group or variant loss. Point loss alone does not pass, and point survival is
+not treated as failure. If neither group nor variant is lost after a proven
+replacement, the control fails rather than claiming reproduction.
+
+### Compile-first isolated loss binary
+
+Source review of the new Python helper and runner must precede execution.
+`native_footprint_children_loss_build.py` runs only in an admitted clean
+disposable source snapshot. Its sole transient Rust edit replaces exactly
+`&targets, // A8 sync inventory targets` with
+`&[], // A8 sync inventory targets`. It does not change the refresh guard,
+replacement code, protobuf definitions, tests, assertions, library or fixture.
+No production Rust edit is part of this packet.
+
+The runner first requires the existing compile-first, nonzero-test positive
+Rust gate and builds a positive binary. It then builds the control in a
+separate target directory and copies that binary out. In `finally`, including
+after a failed control build, it restores the exact original source bytes,
+requires the restored positive Rust gate and rebuilds/copies the positive
+binary. Original/control source bytes, SHA-256 hashes, revision, build/test
+logs and both binary hashes are retained in the outside-source evidence root.
+The native helper checks this manifest, exact marker mutation hash, current
+restored source hash and supplied positive/control binary hashes before setup.
+This is auditable build provenance, not a native reproduction result.
+
+Run remotely under the coordinator's admitted build deadline and capacity
+limits. These commands are documentation only; this child ran none of them.
+`EVIDENCE` must resolve outside the disposable source snapshot.
+
+```sh
+python3 crates/konnect-core/tests/native_footprint_children_loss_build.py \
+  --disposable-checkout --out "$EVIDENCE/loss-build"
+cargo build -p konnect-ipc --locked --example native_footprint_children_capture
+```
 
 ### Native launch commands
 
@@ -254,7 +320,80 @@ assert not Path(audit["control_root"]).exists(), audit
 PY
 ```
 
+### Supervised native loss sequence
+
+After source audit and the isolated build above, run the following from the
+same clean disposable snapshot. This uses the unchanged 60-second supervisor
+and a 90-second outer deadline per invocation. Every invocation gets its own
+Xvfb, native root and evidence directory. No shared Konnect endpoint is used.
+It runs the restored positive native gate before the loss control, and again
+in `finally`. Each invocation must independently pass the lifecycle/root audit.
+If cleanup fails, stop the worker and retain evidence; do not continue native
+execution with uncertain ownership. The restored Rust gate has already run
+inside the build runner regardless of native outcomes.
+
+```sh
+python3 - "$PWD" "$GATE" "$EVIDENCE" <<'PY'
+import json, shutil, subprocess, sys
+from pathlib import Path
+
+root, gate, evidence = map(lambda p: Path(p).resolve(), sys.argv[1:])
+gate.mkdir(parents=True, exist_ok=True)
+build = evidence / "loss-build"
+revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+helper = root / "crates/konnect-core/tests/native_footprint_children_native.py"
+supervisor = root / "crates/konnect-core/tests/support/pcb_export_supervisor.py"
+raw = root / "target/debug/examples/native_footprint_children_capture"
+cleanup_ok = True
+
+def run(name, *extra):
+    global cleanup_ok
+    script = gate / f"{name}.py"
+    audit = evidence / f"{name}-supervisor"
+    audit.mkdir(parents=True, exist_ok=False)
+    shutil.copyfile(supervisor, script)
+    script.with_suffix(".json").write_text(json.dumps({
+        "program": "/usr/bin/python3", "seconds": 60, "audit": str(audit)}))
+    out = evidence / name
+    cleanup_ok = False
+    result = subprocess.run([
+        "xvfb-run", "-a", "/usr/bin/python3", str(script), str(helper),
+        "--disposable-worker", "--konnect", str(build / "positive-konnect"),
+        "--capture-helper", str(raw), "--source-revision", revision,
+        "--out", str(out), *extra], cwd=root, timeout=90)
+    lifecycle = json.loads((out / "native-lifecycle.json").read_text())
+    assert not lifecycle["cleanup_errors"], lifecycle
+    assert not lifecycle["mounts_under_control_root"], lifecycle
+    assert not lifecycle["snapshots"][-1]["owned_descendants"], lifecycle
+    assert lifecycle["temporary_directory_removed"], lifecycle
+    assert not Path(lifecycle["control_root"]).exists(), lifecycle
+    cleanup_ok = True
+    result.check_returncode()
+    report = json.loads((out / "native-footprint-children.json").read_text())
+    assert report["status"] == "passed", report
+    if extra:
+        assert report["unsafe_loss_control"]["status"] == "reproduced", report
+
+run("loss-positive-before")
+try:
+    run("loss-control", "--mode", "sync-loss-control",
+        "--control-konnect", str(build / "control-konnect"),
+        "--control-build-evidence", str(build / "native-loss-build.json"))
+finally:
+    if cleanup_ok:
+        run("loss-positive-restored")
+    else:
+        raise RuntimeError("native cleanup uncertain; retain worker for inspection, no further native run")
+PY
+```
+
+Retain all three native reports, supervisor audits and the build manifest.
+A failed control remains a failed sequence even when restored positives pass.
+Do not close `3bqz` on the safe gates alone or infer blanket point loss from
+group/variant loss. All these native/control results remain pending.
+
 Pending acceptance: formatting, compile, served regressions, every isolated
 control and restored positive, full workspace checks, native captures,
-zero-RPC proof, native readback, lifecycle audit and independent root absence.
+positive refusal zero-RPC proof, actual native loss reproduction and per-kind
+observations, native readback, lifecycle audit and independent root absence.
 The coordinator owns admission, final merge and clean merged-child removal.
