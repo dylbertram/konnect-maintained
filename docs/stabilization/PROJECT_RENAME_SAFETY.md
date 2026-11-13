@@ -235,6 +235,19 @@ The gate uses two fresh, clearly reported fixture copies:
    byte oracle. It does **not** prove recovery of a previously observed-live
    project's saved-file authority in the same server session.
 
+The refusal must match a current production ownership contract, not merely an
+arbitrary failed/unchanged result. `recognized_route` records `project-lock`,
+`design-lock` or `exact-live-board`; the nested refusal evidence retains the
+exact guard path, reason and message contract. Project/board lock machine
+reasons require their matching owned old-name path and source-defined message.
+Schematic `conflict` has no `error.reason` in the current schema, so only its
+exact lock message and one owned old-name schematic path qualify. The plain
+exact-live-board refusal requires the exact message in both `message` and
+`handler_error.reason`, bound to this case's preceding exact `open_project`
+result and old-name project outcome target. Missing/unclassified reasons,
+generic conflicts and foreign-case paths fail. No error path is invented for
+the pathless live-board helper.
+
 No authentic lock is removed to force the exact IPC branch. A project/design
 lock may refuse first. That is valid native ownership evidence, not exact IPC
 branch coverage. The report distinguishes it from the existing served-mock
@@ -244,7 +257,9 @@ real bytes to the same owned editor and retains raw request/response files.
 The refusal interval must contain zero mutation RPCs and no unclassified
 non-read commands; an empty interval caused by an earlier lock is reported
 honestly. Omitting this optional argument records RPC observation as unavailable,
-not zero. No fake RPC is generated.
+not zero. Exact IPC-branch coverage requires the recognized exact-live-board
+route and its real `GetOpenDocuments` RPC, never just a message substring or a
+lock refusal. No fake RPC is generated.
 
 The positive case uses public MCP dry run and apply with
 `rename_directory: true`. Dry run must preserve all tree entries and bytes and

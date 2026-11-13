@@ -256,6 +256,115 @@ def start_api(lifecycle, binary, config, environment, out, sessions, name):
     return api
 
 
+def recognize_ownership_refusal(body, project, opened):
+    """Fail closed against the current project.rs/pcb_board.rs error contracts."""
+    pro = str(project / f"{OLD}.kicad_pro")
+    board = str(project / f"{OLD}.kicad_pcb")
+    require(opened.get("ipc_available") is True and opened.get("requested_open") is True
+            and opened.get("requested_path") == board and opened.get("requested_board") == board
+            and opened.get("requested_check_error") is None,
+            "ownership refusal is not bound to this case's exact old-name board")
+    outcome = body.get("outcome")
+    require(isinstance(outcome, dict) and outcome.get("target") == pro,
+            "ownership refusal targets a different or missing old-name project")
+    error, message = body.get("error"), body.get("message")
+    require(isinstance(error, dict) and isinstance(message, str) and bool(message),
+            "ownership refusal requires structured error fields and an actual message")
+    kind, reason = error.get("kind"), error.get("reason")
+    require(isinstance(kind, str), "ownership refusal is missing its error kind")
+
+    if kind == "unsafe_file_fallback":
+        require(set(error) == {"kind", "path", "reason"},
+                "unexpected ownership error schema")
+        require(isinstance(reason, str) and bool(reason), "ownership refusal has no machine reason")
+        if reason in {"kicad_project_lock_present", "kicad_project_lock_unreadable"}:
+            require(error["path"] == pro, "project lock refusal belongs to another project")
+            lock = str(project / f"~{OLD}.kicad_pro.lck")
+            tail = (
+                " pcbnew and Eeschema rewrite the project file from their own copy when "
+                "they save, so a project rename written to it now would be reverted. "
+                "This ownership check refused further work. Any earlier completed rename "
+                "steps remain applied as reported. Close the project in KiCad, or make "
+                "the change there, and retry. If no KiCad program has this project open, "
+                "the lock was left behind by a crash: delete it and retry."
+            )
+            if reason == "kicad_project_lock_present":
+                situation = (
+                    f"KiCad's project lock '{lock}' is present, so a KiCad program "
+                    "holds this project."
+                )
+                require(message == situation + tail, "project lock message does not match its reason")
+            else:
+                prefix = f"KiCad's project lock '{lock}' could not be inspected ("
+                suffix = "), so a KiCad program holding this project cannot be ruled out." + tail
+                require(re.fullmatch(re.escape(prefix) + r"(.+)" + re.escape(suffix), message),
+                        "unreadable project lock message has no matching inspection detail")
+            return {"route": "project-lock", "guard_path": pro, "lock_path": lock,
+                    "reason": reason, "reason_source": "error.reason",
+                    "message_contract": "project_lock_refusal_from + rename_outcome"}
+        if reason in {"kicad_lock_present", "kicad_lock_unreadable"}:
+            require(error["path"] == board, "board lock refusal belongs to another design")
+            lock = str(project / f"~{OLD}.kicad_pcb.lck")
+            rename_message = (
+                f"KiCad ownership prevents renaming or rewriting '{board}'. "
+                "Close or recover the editor first."
+            )
+            if message != rename_message:
+                tail = (
+                    " The saved board file may be older than unsaved editor state, so "
+                    "Konnect did not modify it. Reopen or recover the board in KiCad, "
+                    "reconcile it, and save the authoritative state. If KiCad was "
+                    "deliberately closed cleanly, restart Konnect only after confirming "
+                    "that the saved file is authoritative."
+                )
+                if reason == "kicad_lock_present":
+                    situation = (
+                        f"KiCad sibling lock '{lock}' is present; its contents cannot "
+                        "prove whether an editor still owns newer in-memory state."
+                    )
+                    require(message == situation + tail, "board lock message does not match its reason")
+                else:
+                    prefix = f"KiCad sibling lock '{lock}' could not be inspected ("
+                    suffix = "); its absence cannot be established." + tail
+                    require(re.fullmatch(re.escape(prefix) + r"(.+)" + re.escape(suffix), message),
+                            "unreadable board lock message has no matching inspection detail")
+            return {"route": "design-lock", "guard_path": board, "lock_path": lock,
+                    "reason": reason, "reason_source": "error.reason",
+                    "message_contract": "rename_lock_error or board_lock_refusal_from"}
+
+    if kind == "conflict":
+        paths = error.get("paths")
+        allowed = {str(project / f"{OLD}.kicad_sch"), str(project / CHILD)}
+        require(set(error) == {"kind", "paths"} and isinstance(paths, list)
+                and len(paths) == 1 and isinstance(paths[0], str) and paths[0] in allowed,
+                "schematic lock refusal has no exact owned old-name design path")
+        # Current schematic Conflict has no error.reason field. Its exact
+        # source-defined lock message, not a generic conflict, supplies cause.
+        cause = "KiCad editor lock is present or cannot be inspected"
+        require(message == f"Project rename refused at '{paths[0]}': {cause}",
+                "generic/non-ownership schematic conflict is not acceptance")
+        return {"route": "design-lock", "guard_path": paths[0],
+                "lock_path": str(project / ("~" + Path(paths[0]).name + ".lck")),
+                "reason": cause, "reason_source": "exact rename_lock_error message",
+                "message_contract": "rename_lock_error + rename_conflict"}
+
+    live_message = (
+        "KiCAD currently holds this board open, and a project rename written to the file "
+        "would be discarded by KiCAD's next save. Close the board in KiCAD (or make "
+        "the edit there) and retry — this tool has no IPC path for a live board yet."
+    )
+    require(kind == "handler_error" and set(error) == {"kind", "reason"}
+            and reason == live_message and message == live_message,
+            "missing/unclassified ownership reason is not native refusal evidence")
+    # The current plain live-board helper has no error.path. Bind it through
+    # the exact preceding open_project response and rename outcome target,
+    # already checked above; never fabricate a structured error.path.
+    return {"route": "exact-live-board", "guard_path": board,
+            "reason": reason, "reason_source": "error.reason + exact message",
+            "path_basis": "open_project requested_board + rename outcome target",
+            "message_contract": "refuse_if_board_open_in_kicad + rename_outcome"}
+
+
 def refusal(lifecycle, a8, run, binary, capture_helper, config, environment,
             project, upstream, out, sessions, report):
     config.write_text(json.dumps({"kicad_cli": environment["RENAME_KICAD_CLI"],
@@ -299,6 +408,10 @@ def refusal(lifecycle, a8, run, binary, capture_helper, config, environment,
     report["refusal"] = {"response": body, "reason": body.get("error"),
                          "message": body.get("message")}
     write_json(out / "native-project-rename.json", report)
+    recognized = recognize_ownership_refusal(body, project, opened)
+    report["recognized_route"] = recognized["route"]
+    report["refusal"]["recognized_route"] = recognized
+    write_json(out / "native-project-rename.json", report)
     require(body.get("outcome", {}).get("status") == "failed", "native refusal lacks failed outcome")
     require(body["outcome"]["requested"] == 1 and body["outcome"]["completed"] == 0
             and body["outcome"]["failed"] == 1,
@@ -334,7 +447,7 @@ def refusal(lifecycle, a8, run, binary, capture_helper, config, environment,
         report["refusal"].update(
             rpc_observation={"commands": names, "mutation_count": 0},
             exact_ipc_branch_covered=(
-                "currently holds this board open" in body.get("message", "")
+                recognized["route"] == "exact-live-board"
                 and "GetOpenDocuments" in names),
         )
     # Never remove authentic lock files to reach another authority branch.
