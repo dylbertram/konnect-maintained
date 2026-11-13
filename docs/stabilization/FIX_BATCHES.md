@@ -177,8 +177,10 @@ For original `3bqz` closure, safe refusal and mock controls are not enough.
 Require actual native loss through the maintained whole-footprint sync with
 only its inventory guard disabled in a separately built disposable control.
 The optional control, per-kind observations and restored-positive commands
-are documented in `NATIVE_FOOTPRINT_CHILDREN.md`. Native loss remains unproven
-until that supervised gate passes; do not assume point loss.
+are documented in `NATIVE_FOOTPRINT_CHILDREN.md`. That supervised gate passed
+on maintained child `a8b79adc`: owned groups and variants were lost, while the
+point and board-level group membership survived. The bounded refusal is
+merged at `ca8632d`; the other A8 scopes below remain separate.
 
 Other small packets cover BOM versus board exclusion, library placement flags,
 pad fabrication properties, exact-root identity normalization, zone/net routing

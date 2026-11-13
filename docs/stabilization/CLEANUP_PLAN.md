@@ -56,21 +56,18 @@ The complete inventory and packet boundaries are in `FIX_BATCHES.md`.
 - Reproduction-only, platform-dependent and deferred-capability work remains
   gated on its actual environment, scope and evidence.
 
-### Next bounded safety packet
+### Remaining bounded safety work
 
-Source qualification of `3bqz/emvb` found that library-input guards do not
-inspect native children on the placed footprints being replaced. After the
-field foundation lands, inventory the exact live document by footprint KIID
-and refuse replacements owning `group`, `point` or `variant` children, in both
-sync and library refresh. Check dry run and recheck apply before any mutation;
-unknown inventory must fail closed. Noop and additions-only paths stay unchanged.
+The verified `3bqz/emvb` guard now inventories exact live replacement targets
+by KIID in sync and refresh, rechecks apply, refuses whole mixed plans and fails
+closed on unknown inventory. Noop and additions-only inventory boundaries are
+unchanged. Native controls reproduced owned group/variant loss while the point
+and board-level group membership survived.
 
-Do not repeat the archived blanket loss rationale. KiCad 10.0.8 serializes
-points and variants, but our typed schema lacks newer variant fields; owned
-groups remain distinct from board-level group membership. Current sync point
-loss is not established. The three-kind refusal is a bounded compatibility
-policy, not universal preservation or A7 propagation. Runtime reproduction,
-native fixture provenance and no-mutation served controls remain required.
+Use that bounded refusal when assessing A7's wider updates; it is not universal
+preservation. Broader A8 metadata, direct-placement presentation and stroke/no-op
+work remain separate. Project rename is the active safety packet, with its
+cross-platform qualification limits recorded before acceptance.
 
 ## Verification and closure
 
@@ -189,7 +186,7 @@ activation, branch protection, release or publication are authorized by this pla
   `.remote-build-jobs/boat-field-lifecycle-verification/`.
   Earlier setup/GVFS-cleanup failures remain failed; no shared services were
   killed or unmounted. The clean merged child was removed. `annz` is closed;
-  `z705`, A7/A8 and stroke/no-op work remain open.
+  `z705`, A7, broader A8 metadata and stroke/no-op work remain open.
 - Independent four-file audit found `origin/fix/789-library-fields` fully
   superseded. After native/parent acceptance, its remote SHA was rechecked at
   `63123625e1e4512cdca3cce1ac5ab4997db3ee4d` and deletion used an exact-SHA
@@ -202,17 +199,26 @@ activation, branch protection, release or publication are authorized by this pla
   `.remote-build-jobs/boat-symbol-verification/`.
   `qpq3/4nj5` are closed. The user-approved raw-syntax/bool policy preserves
   Rust source compatibility; no new public `Symbol` fields were added.
-- Twenty-one original Kata records are now closed with evidence. Active
-  implementation is the bounded A8 native-child refusal `3bqz/emvb`;
-  production, served and corrected native-tooling source reviews passed.
-  Runtime controls and native acceptance remain pending, including the
-  original issue's live failing-before reproduction criterion.
-  Project-rename safety `svj3/xsz0` uses the approved snapshot-guarded,
-  truthful partial/uncertain-outcome policy. Its approved no-replace adapter
-  must preserve advertised Windows, macOS and Linux availability, using
-  already-locked `rustix` 1.1.4 on Linux/macOS and `windows-sys` 0.61.2 on
-  Windows. No unsafe fallback is permitted. Implementation and platform gates
-  remain pending; Linux checks do not qualify macOS or Windows runtime behavior.
+- A8 child `a8b79adc` merged at `ca8632d`. Seven focused tests, all eight
+  assertion-pinned controls and native positive/loss/restored gates passed.
+  The actual sync control lost U1's owned group and variant; its point and
+  board-level membership survived. Same-document raw IPC, zero-mutation
+  refusals, safe R1 readbacks, copied-binary hashes and all lifecycle/root
+  audits passed independent review. Full child and combined-parent Rust gates
+  passed 2,549 tests, Clippy, nine doctests, Python 18/9, counts and builds.
+  Combined-parent native supervisor/export/private/route/text/symbol/field/A8
+  gates passed, including independent root absence. Evidence and retained
+  executables are in `.remote-build-jobs/boat-native-children-verification/`.
+  `3bqz/emvb` are closed; the clean, fully merged child branch/worktree was
+  removed. Twenty-three original records are now closed with evidence;
+  broader A8 scopes remain open.
+- Project-rename safety `svj3/xsz0` uses the approved snapshot-guarded,
+  truthful partial/uncertain-outcome policy. Its implementation retains
+  Windows, macOS and Linux through already-locked `rustix` 1.1.4 and
+  `windows-sys` 0.61.2, without unsafe fallback. Independent source review and
+  formatting passed at `a4cc8b0`; Linux runtime gates remain pending.
+  Cross-target and native macOS/Windows/UNC gates are unverified. Linux checks
+  do not qualify their runtime behavior.
 - All four retained Dependabot branches were audited against the parent.
   None is incorporated or demonstrably superseded; preserve them. Findings
   are recorded on existing Kata `f0kv`.

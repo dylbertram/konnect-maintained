@@ -32,9 +32,10 @@ assert that every KiCad version loses every child kind. Existing revision
 guards remain; this adds no cross-request atomic GUI lock and no universal
 metadata-preservation promise. Library-input policy is unchanged.
 
-See `docs/stabilization/NATIVE_FOOTPRINT_CHILDREN.md` for scope, fixture
-provenance and coordinator-owned verification gates. Native acceptance is
-pending, not established by the imported fixture or mock tests.
+See `docs/stabilization/NATIVE_FOOTPRINT_CHILDREN.md` for scope, provenance and
+verified coordinator gates. Linux/KiCad 10.0.8 acceptance reproduced owned
+group and variant loss through an unguarded sync; the point and board-level
+group membership survived. This is not a cross-version preservation promise.
 
 ## Unreleased: placed schematic symbols preserve optional attribute syntax
 
@@ -98,9 +99,10 @@ remain observable.
 This does not adopt library presentation for direct `place_component`, reset
 placed Reference/Value during refresh, propagate schematic custom fields or
 expand existing-footprint sync updates. Board-default field styling is not
-followed. Stroke/no-op convergence and A8 whole-footprint child preservation
-remain separate work. See `docs/stabilization/LIBRARY_FIELDS.md` for the
-coordinator-owned native gate and remaining #789 acceptance.
+followed. Stroke/no-op convergence and broader whole-footprint metadata
+preservation remain separate work. The bounded native-child refusal above
+does not implement general preservation. See `docs/stabilization/LIBRARY_FIELDS.md`
+for the coordinator-owned native gate and remaining #789 acceptance.
 
 ## Unreleased: Rust schematic text retains simulation exclusion and unknown children
 
