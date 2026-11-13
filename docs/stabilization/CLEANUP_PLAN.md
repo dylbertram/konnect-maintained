@@ -133,13 +133,27 @@ activation, branch protection, release or publication are authorized by this pla
   schematic was rejected in job `2fe4fbfa-2b08-4202-8286-22c3bab65de2`.
   Correction `ba53ecb` adds complete native-instance cloning, independent
   process supervision and captured inputs/outputs. Candidate `9f5d69ad`
-  incorporates parent `ac4c4823`; verification is running on `bx_fv2c2jjy`,
-  command `cmd_ramcfajlbuhk`. Native acceptance and controls remain pending.
-- Active implementation children are routes and the library-field foundation.
-  Foundation `95e9d23` is not accepted. Review requires absent/default-zero
-  thickness normalization and a genuine native upright-operation oracle.
-  Preserve its uncommitted corrections and `origin/fix/789-library-fields`
-  at `63123625` until the replacement is verified and merged.
+  incorporates parent `ac4c4823`. Its captured label-before failure exposed
+  omitted mandatory label angles. Fixture correction `d7f51fc` passed 12
+  focused tests, three lifecycle tests and all 34 native netlist exports in
+  `cmd_vog7xvmdi9st` on `bx_fv2c2jjy`. Every native audit reports successful
+  status and group cleanup. Mutation controls and integration remain pending.
+- Active implementation children are routes, library-field foundation and
+  text preservation. Foundation `d612c964` passes independent source review,
+  focused suites, workspace Clippy and debug build in `cmd_tabivfq0xhab`.
+  It normalizes protobuf-zero defaults and uses native Rotate controls.
+  Native acceptance stopped before production on a missing design-block
+  template; portable disposable configuration is being corrected.
+  Mutation controls run separately on the unchanged snapshot. Preserve
+  `origin/fix/789-library-fields` at `63123625` until the replacement is
+  verified and merged. `z705` remains partial; A7/A8 are separate.
+- Text preservation `174e/pdps` is qualified against current source. The user
+  explicitly approved a documented public Rust `Text` source break while
+  preserving `Text::new` and tool schemas. Native LF fixture capture in
+  `cmd_wk7jitojaaxx` passed supervised KiCad 10.0.8 upgrade and netlist export,
+  with no newline normalization. Native SHA-256 is
+  `1bbd268c32a780f2314fb0a280405be92800086ff2ac1a5cf50b15f5ca266398`.
+  Exact unchanged text-block acceptance is required, not whole-file identity.
 - All four retained Dependabot branches were audited against the parent.
   None is incorporated or demonstrably superseded; preserve them. Findings
   are recorded on existing Kata `f0kv`.
