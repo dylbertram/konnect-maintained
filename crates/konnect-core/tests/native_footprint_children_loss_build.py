@@ -32,19 +32,25 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def rust_sources():
-    """Hash every Rust source, including build.rs/tests, outside target/.git."""
+def source_manifest():
+    """Hash crate/xtask src Rust, build scripts and workspace Cargo* files."""
     def unreadable(error):
         raise error
 
     manifest = {}
     for directory, children, files in os.walk(ROOT, onerror=unreadable):
         children[:] = sorted(name for name in children
-                             if name != ".git" and Path(directory) / name != TARGET)
+                             if name not in {"target", "__pycache__", ".git"}
+                             and (Path(directory) != ROOT or name in {"crates", "xtask"}))
         for name in sorted(files):
-            if name.endswith(".rs"):
-                path = Path(directory) / name
-                manifest[str(path.relative_to(ROOT))] = sha(path)
+            path = Path(directory) / name
+            relative = path.relative_to(ROOT)
+            crate = relative.parts[0] in {"crates", "xtask"}
+            rust = crate and name.endswith(".rs") and (
+                "src" in relative.parts[1:-1] or name == "build.rs")
+            cargo = name.startswith("Cargo") and (len(relative.parts) == 1 or crate)
+            if rust or cargo:
+                manifest[str(relative)] = sha(path)
     return manifest
 
 
@@ -104,7 +110,12 @@ def main():
         "status": "incomplete",
         "source_revision": args.source_revision.lower(),
         "revision_provenance": "explicit coordinator archive revision; no Git inferred or initialized",
-        "rust_sources_before": rust_sources(),
+        "source_manifest_before": source_manifest(),
+        "source_manifest_scope": {
+            "workspace_files": ["Cargo*"], "crate_roots": ["crates", "xtask"],
+            "files": ["**/src/**/*.rs", "**/build.rs", "Cargo*"],
+            "excluded_directories": ["target", "__pycache__", ".git"],
+        },
         "source_path": str(SOURCE.relative_to(ROOT)),
         "original_source_sha256": hashlib.sha256(original).hexdigest(),
         "control_source_sha256": hashlib.sha256(mutated).hexdigest(),
@@ -123,24 +134,24 @@ def main():
         positive(out, "baseline", deadline, report)
         report["baseline_positive_gate"] = True
         report["baseline_binary_sha256"] = build(out, "baseline", deadline, report)
-        assert rust_sources() == report["rust_sources_before"], "baseline source drift"
+        assert source_manifest() == report["source_manifest_before"], "baseline source drift"
         try:
             SOURCE.write_bytes(mutated)
             assert SOURCE.read_bytes() == mutated
-            expected = {**report["rust_sources_before"],
+            expected = {**report["source_manifest_before"],
                         str(SOURCE.relative_to(ROOT)): report["control_source_sha256"]}
-            report["rust_sources_control"] = rust_sources()
-            assert report["rust_sources_control"] == expected, "unexpected control source drift"
+            report["source_manifest_control"] = source_manifest()
+            assert report["source_manifest_control"] == expected, "unexpected control source drift"
             report["control_binary_sha256"] = build(out, "control", deadline, report)
             assert SOURCE.read_bytes() == mutated, "control source changed during build"
-            assert rust_sources() == expected, "control build source drift"
+            assert source_manifest() == expected, "control build source drift"
         finally:
             SOURCE.write_bytes(original)
             assert SOURCE.read_bytes() == original, "exact source restoration failed"
             report["exact_restoration"] = True
-            report["rust_sources_restored"] = rust_sources()
-            assert report["rust_sources_restored"] == report["rust_sources_before"], (
-                "Rust source drift after exact target restoration; never overwrite other files")
+            report["source_manifest_restored"] = source_manifest()
+            assert report["source_manifest_restored"] == report["source_manifest_before"], (
+                "Rust/Cargo source drift after exact target restoration; never overwrite other files")
             # Also required after a failed control build. A compile failure is
             # never evidence. If the budget expired, restore bytes but fail,
             # without starting another command or extending the deadline.
@@ -157,12 +168,12 @@ def main():
         report.update(status="failed", error=repr(error), traceback=traceback.format_exc())
         raise
     finally:
-        report["rust_sources_after"] = rust_sources()
-        if report["rust_sources_after"] != report["rust_sources_before"]:
+        report["source_manifest_after"] = source_manifest()
+        if report["source_manifest_after"] != report["source_manifest_before"]:
             report.update(status="failed", source_drift=True)
         (out / "native-loss-build.json").write_text(json.dumps(report, indent=2))
         if report.get("source_drift"):
-            raise RuntimeError("Rust source manifest drift; retain evidence, do not execute native gate")
+            raise RuntimeError("Rust/Cargo manifest drift; retain evidence, do not execute native gate")
     print(json.dumps(report, indent=2))
 
 

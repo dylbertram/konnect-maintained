@@ -126,12 +126,12 @@ def assert_untouched_raw(before, after, before_dir, after_dir, kiid):
 
 def control_build(args, binary):
     """Require the isolated build runner's restored-positive provenance."""
-    from native_footprint_children_loss_build import rust_sources
+    from native_footprint_children_loss_build import source_manifest
 
     evidence = json.loads(args.control_build_evidence.read_text())
     assert evidence["status"] == "passed", evidence
     assert evidence["source_revision"] == args.source_revision, evidence
-    assert rust_sources() == evidence["rust_sources_before"] == evidence["rust_sources_after"]
+    assert source_manifest() == evidence["source_manifest_before"] == evidence["source_manifest_after"]
     assert evidence["positive_binary_hashes_match"], evidence
     assert evidence["baseline_binary_sha256"] == evidence["restored_binary_sha256"], evidence
     source = (ROOT / "crates/konnect-core/src/tools/pcb_sync.rs").read_bytes()

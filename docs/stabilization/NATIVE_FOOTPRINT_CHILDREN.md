@@ -163,8 +163,11 @@ Coordinator native attempt `cmd_ek51spw9yyuw` against the original `f3578fc`
 helper failed before launching the owned editor because KiCad 10.0.8
 `FOOTPRINT` has no `SetDescription`. This packet uses the exact
 `SetLibDescription` setter and matching `GetLibDescription` readback, without
-API-name fallbacks. The coordinator owns qualification against the installed
-SWIG source and inspection of that attempt's retained lifecycle evidence.
+API-name fallbacks. The coordinator confirmed the direct methods in the
+worker's installed
+`/usr/lib/python3/dist-packages/pcbnew.py`, `GetLibDescription` at lines
+23265-23267 and `SetLibDescription` at lines 23269-23271.
+The coordinator owns inspection of the attempt's retained lifecycle evidence.
 The failed attempt is not a passing native gate, and the amended helper has
 not been executed here.
 
@@ -265,10 +268,14 @@ the runner nor the native commands need Git. The coordinator must supply the
 actual archived source commit as required `--source-revision`, validated as
 a full 40-hex SHA. This revision is coordinator provenance, not something
 inferred or verified from Git in the archive. Never initialize Git or invent
-a revision to satisfy the argument. The runner inventories SHA-256 for every
-Rust source outside `ROOT/target` and `.git`, including production, build,
-test and example sources. It records before/control/restored/after manifests
-and rejects any drift beyond the one intended transient control edit.
+a revision to satisfy the argument. The runner inventories SHA-256 for
+`crates/**/src/**/*.rs`, crate build scripts and workspace `Cargo*` files.
+It also covers `xtask/src` Rust, its build script and Cargo files.
+Every directory named `target`, `__pycache__` or `.git` is excluded before
+traversal, including nested generated directories. Standalone tests and
+examples are outside this production-source inventory. The report records
+the manifest scope and before/control/restored/after source manifests. It
+rejects Rust or Cargo drift beyond the one intended transient control edit.
 Its sole transient Rust edit replaces exactly
 `&targets, // A8 sync inventory targets` with
 `&[], // A8 sync inventory targets`. It does not change the refresh guard,
@@ -286,7 +293,7 @@ that same `ROOT/target` for every Cargo command.
 It copies the baseline binary outside target as `baseline-konnect`, then
 builds and copies `control-konnect` before restoration. In `finally`, including
 after a failed control build, it restores exact original source bytes,
-rejects other Rust source drift and requires the restored positive Rust gate.
+rejects other Rust/Cargo source drift and requires the restored positive Rust gate.
 It rebuilds/copies `positive-konnect` without overwriting either earlier copy.
 Paths and hashes for all three binaries, source manifests, original/control
 source bytes, revision and command logs remain in the outside-source evidence
