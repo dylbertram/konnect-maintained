@@ -3,7 +3,7 @@
 ## Steps
 
 - [x] Complete wave 1: small documentation fixes, stable read identities and board stale-write protection.
-- [ ] Review wave 1, verify failing-before/passing-after regressions, and integrate every accepted child into `cleanup/main`.
+- [x] Review wave 1, verify failing-before/passing-after regressions, and integrate every accepted child into `cleanup/main`.
 - [ ] Complete wave 2: export correctness and bounded schematic connectivity/preservation fixes.
 - [ ] Correct the footprint-field foundation, then complete only preservation-safe propagation.
 - [ ] Reconcile remaining fix packets against current source and available native/platform evidence.
@@ -121,3 +121,12 @@ activation, branch protection, release or publication are authorized by this pla
   Existing executor images are not claimed changed by saving this snapshot.
 - Export acceptance corrections remain in progress after review.
   New bounded children cover private fields and routed foreign-net protection.
+- Combined gate `275343da-a26a-4628-8743-88ae2c4d271d` passed on `b1c0b3c`:
+  workspace tests, Clippy, doctests and Python suites. Nine existing Kata records
+  are closed with typed evidence. Historical PR-review record `7enh` remains open
+  for a superseded disposition; its optional runtime hint was not adopted, and
+  Kata rejected the superseded-close evidence arguments. The original report
+  `mvy5` is complete.
+- Export job `f90f80f1-8740-42dc-8736-04d39bdf1993` completed native provisioning
+  but stopped at the formatting gate. Formatting-only corrections are pending
+  before testing; no native artifact success is claimed.
