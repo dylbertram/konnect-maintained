@@ -256,3 +256,149 @@ These controls are proposed, not executed evidence.
 Record exact commands, mutations, job IDs, failures and native CLI version on
 the existing Kata records after coordinator execution. Then rerun relevant
 checks on the merged parent. No success is claimed here for proposed checks.
+
+## Prepared mutation runner
+
+`tests/support/route_guard_mutations.py` is a coordinator-only runner, prepared
+without executing it. This follow-up changes only that runner and this document.
+It does not change any Rust source, tests, supervisor policy or CAD fixture
+while the coordinator's `d7f51fc` rerun is in flight.
+
+The runner declares source pin
+`d7f51fc034122b6c43c679bc1e27f666cb422854` and verifies SHA-256 fingerprints for
+the wiring source, served test module, batch source, supervisor, native source
+fixture and Cargo.lock. In a sanitized archive without Git metadata these are
+critical-file checks, not proof of the entire archive's Git identity. The
+coordinator must still record the exact source archive/revision. New runner/docs
+commits are compatible only while those pinned files remain byte-identical.
+
+Run only after the current native rerun finishes and the coordinator admits an
+exclusive disposable source copy with measured capacity and an outer cgroup/job
+deadline. Git checkouts/worktrees are rejected, even with the acknowledgement
+flag. Do not point it at this child worktree, the integration parent, an active
+verification copy or a live hardware project. It neither submits jobs nor
+installs anything. Cargo uses `--locked --offline`; an explicitly installed
+toolchain cargo binary and its sibling rustc/rustdoc bypass rustup shims.
+The dependency/compiler cache must already be warm.
+
+Example in the admitted sanitized worker source root:
+
+```sh
+set +e
+python3 crates/konnect-core/tests/support/route_guard_mutations.py \
+  --source "$PWD" \
+  --output "$PWD/route-mutation-evidence" \
+  --cargo /absolute/installed/toolchain/bin/cargo \
+  --native-cli /usr/bin/kicad-cli \
+  --admitted-disposable-source
+status=$?
+if test -d route-mutation-evidence; then
+  tar -czf route-mutation-evidence.tar.gz route-mutation-evidence || exit 1
+fi
+exit "$status"
+```
+
+To split bounded work across coordinator-owned commands, use different fresh
+evidence directories and the same clean pinned source:
+
+```sh
+python3 crates/konnect-core/tests/support/route_guard_mutations.py \
+  --source "$PWD" --output "$PWD/route-native-controls" \
+  --cargo /absolute/installed/toolchain/bin/cargo \
+  --only guard,local-t --native-cli /usr/bin/kicad-cli \
+  --admitted-disposable-source
+
+python3 crates/konnect-core/tests/support/route_guard_mutations.py \
+  --source "$PWD" --output "$PWD/route-terminal-controls" \
+  --cargo /absolute/installed/toolchain/bin/cargo \
+  --only alternate-bend,label,sheet,ambiguity \
+  --admitted-disposable-source
+```
+
+An existing evidence directory or runner lock is a refusal, not permission to
+delete another attempt. A missing dependency/toolchain or a 60-second command
+budget that is too small is a blocked run, not an expected negative control.
+`--seconds` accepts 1 through 60 and defaults to 60. Admit/prewarm compilation
+separately if it cannot fit; do not silently fall back to installs or a longer
+unbounded command.
+
+The baseline runs focused served/fixture positives, the batch regression, and
+unit-aware wiring positives. With `--native-cli`, it also requires the unchanged
+complete native oracle to pass before any mutation. Each control changes only
+`sch_wiring.rs` through one exact, unique source anchor:
+
+- `guard` clears the computed foreign-join list, retaining type checking and
+  normal parse/geometry work. Required named failures are alternate-bend,
+  blocked-pin/label and straight-third-pin regressions.
+- `local-t` removes only the local T-position filter. Required named failures
+  are the untouched-tee and intentional-tap regressions.
+- `alternate-bend` removes only the second bend. Its named alternate-route
+  regression must fail.
+- `label` omits label terminals without changing graph label seeding. The
+  standalone-label refusal regression must fail.
+- `sheet` still extracts sheet pins but does not add their terminals, avoiding
+  an unused-import compile failure. The alternate-route regression must fail.
+- `ambiguity` selects the first matching placed pin. The missing/ambiguous/
+  unknown-geometry no-write regression must fail.
+
+Every mutant must first pass `cargo test --lib --no-run`. Each negative then
+runs its exact qualified test name and must exit 101 with exactly that named
+Rust test in the failure list and panic evidence. Compile, startup, filtered-out
+tests, timeout, supervisor failure and unexpected success do not count.
+Baseline and restored positives must explicitly report their required named
+tests as passed, preventing empty-filter successes.
+
+For `guard` and `local-t`, `--native-cli` additionally runs the unchanged native
+oracle as an expected named failure. No test adapter or success-gate relaxation
+is needed: the current oracle exports and captures its native after-netlist
+before checking memberships. The runner requires native export status 0 and
+completed, reaped, non-timeout native audits, then reads native netlist
+membership rather than inferring geometry:
+
+- Guard disabled must change R1.2/R2.1 into exactly R1.2/R2.1/R3.1, with R3.1
+  separate before the route.
+- Local T filter disabled must add exactly R53.2 to R51.2/R52.1, with R53.2
+  separate before the route.
+
+The expected baseline partitions must also match. A mere response assertion,
+load rejection, missing capture or unparseable native netlist is not accepted as
+accidental-join evidence. The small standard-library reader handles the captured
+native `kicadsexpr` structure; it is not a routing or connectivity engine.
+Each native control writes `join-proof.json` alongside its unchanged raw
+before/after captures. Native baseline and restored native positives get their
+own output directories; restored native gates run after guard and local-T
+controls, while focused/batch/unit-aware restored positives run after every
+completed control.
+
+Original source bytes and file mode are backed up before mutation. Every
+control and the whole run restore them in `finally`, verify exact bytes/SHA and
+mode, and retain a backup in the evidence directory. Atomic replacement uses a
+new mtime intentionally so Cargo must rebuild restored source rather than reuse
+a mutant binary. A foreign edit is a hard conflict: it is not overwritten and
+`restoration_failed` is reported with the original backup retained. A replaced
+lock is not removed. SIGINT/SIGTERM trigger cleanup/restoration; SIGKILL, worker
+crash, filesystem failure and uninterruptible kernel waits cannot be repaired
+by Python `finally`.
+
+Each cargo subprocess reuses the existing Python supervisor with its independent
+deadline, process-group kill, subreaper and completion audit. The runner bounds
+its wait too and reaps its direct supervisor child. Any command deadline,
+interruption or uncertain cleanup quarantines the attempt: source restoration
+is attempted, no next command/control is started, and restored positives are
+not claimed. Nested native tests create separate native sessions; killing the
+cargo group can kill their supervisors before their native groups finish.
+Therefore an aborted command **requires coordinator outer-cgroup cleanup**,
+not worker reuse or a claim that all nested processes were reaped. This is why
+the exclusive admitted worker and whole-job lifetime bound are prerequisites.
+
+Evidence lives under the requested directory:
+`summary.json`, `original-sch_wiring.rs`, per-command `command.json`,
+`combined.log`, supervisor audits, and separate native `input-capture` trees.
+`summary.json` distinguishes requested native coverage, named failures, compile
+success, restored positives, byte restoration and cleanup quarantine. Preserve
+the whole evidence directory even on failure. The complete example above
+packages it without masking the runner's exit status.
+
+Retrieve the archive with the coordinator's job results, subject to artifact
+size limits. No runner, positive, negative or native-join result is claimed by
+this preparation commit.
