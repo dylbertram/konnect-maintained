@@ -183,16 +183,33 @@ qualified `FOOTPRINT.Points() -> PCB_POINTS` in installed 10.0.8 SWIG source
 around lines 23188-23193 and `RemoveNative(BOARD_ITEM, REMOVE_MODE=NORMAL)`
 around lines 23129-23131.
 
-The helper now uses only `list(fp.Points())` and `fp.RemoveNative(point)` on
-the project-local library copy. It requires exactly one original SafeDIP point,
-zero SafeR points and an empty `Points()` container after removal in each copy.
-There is no fallback, CAD text edit or relaxation of library-input policy.
-Placed U1 children, imported fixture bytes and the raw/refusal checks are
-unchanged. Coordinator-retained evidence is
+The `21f47c5` helper then failed before the editor because `Points()` elements
+are opaque `SwigPyObject` values without `GetClass`. Installed method
+declarations alone did not qualify usable point bindings. Coordinator native
+probe `cmd_1xwse1dvxnby`, passed at 22:09:12, also found that
+`RemoveNative(point)` raises `TypeError`: the opaque point cannot convert to
+`BOARD_ITEM*`. The probe verified the direct native container operation
+`fp.Points().clear()` instead. After `FootprintSave` and `FootprintLoad`, the
+project-local SafeDIP copy had zero points; the stock library hash was
+unchanged. The coordinator reports lifecycle, removed-root and zero-owned-child
+checks passed. Probe evidence is retained at
+`.remote-build-jobs/boat-native-children-verification/point-api-probe.json/result.json`.
+
+The helper now uses only the proven `fp.Points().clear()` on its project-local
+library copy. It requires exactly one original SafeDIP point and zero SafeR
+points, records actual counts and Python binding type names without calling
+`GetClass`, and requires zero points both immediately after clear and after
+native saved-library reload. There is no fallback, unsafe cast, CAD text edit
+or relaxation of library-input policy. This is not a general point-deletion
+API or evidence of blanket point loss. Placed U1 children, imported fixture
+bytes and the raw/refusal checks are unchanged.
+
+The earlier coordinator-retained native evidence is
 `.remote-build-jobs/boat-native-children-verification/a8-final-native-evidence.tar.gz`;
 the coordinator reports lifecycle and independent root-absence checks passed.
 Those actual three-kind serialization observations and sync diagnostics are
-not full native acceptance. This narrow helper correction has not been run.
+not full native acceptance. The probe passed, but this amended full helper
+has not been run.
 
 The helper imports the fixture verbatim. A disposable accepted copy changes
 only through native pcbnew or public Konnect. A project-local native library

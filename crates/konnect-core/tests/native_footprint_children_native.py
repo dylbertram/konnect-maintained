@@ -312,22 +312,31 @@ def main():
             ]:
                 fp = pcbnew.FootprintLoad(str(Path("/usr/share/kicad/footprints") / directory), entry)
                 assert fp is not None, entry
-                removed = []
                 # The stock DIP library itself owns a point. Remove it in a
                 # native library copy so library-input policy cannot mask the
                 # placed-instance gate. Never remove children from placed U1.
-                # KiCad 10.0.8 keeps points in a separate native container,
-                # not GraphicalItems(). Use the qualified native API directly.
+                # KiCad 10.0.8 exposes opaque point elements. The admitted
+                # native probe verified container clear plus saved readback.
                 points = list(fp.Points())
                 assert len(points) == expected_points, (name, len(points), expected_points)
-                for point in points:
-                    removed.append(point.GetClass())
-                    fp.RemoveNative(point)
-                assert not list(fp.Points()), f"{name}: native library points remain"
+                point_types = [type(point).__name__ for point in points]
+                fp.Points().clear()
+                after_points = len(list(fp.Points()))
+                assert after_points == 0, f"{name}: native library points remain"
                 fp.SetFPID(pcbnew.LIB_ID("A8", name))
                 fp.SetLibDescription("a8 native library replacement")
                 writer.FootprintSave(str(library), fp)
-                library_controls.append({"name": name, "removed_native_library_points": removed})
+                saved_fp = pcbnew.FootprintLoad(str(library), name)
+                assert saved_fp is not None, name
+                saved_points = len(list(saved_fp.Points()))
+                assert saved_points == 0, f"{name}: saved native library points remain"
+                library_controls.append({
+                    "name": name, "native_library_points_before": len(points),
+                    "point_binding_types": point_types,
+                    "removed_native_library_points": len(points) - after_points,
+                    "native_library_points_after": after_points,
+                    "saved_native_library_points": saved_points,
+                })
             report["native_library_controls"] = library_controls
             api.call("register_footprint_library", {
                 "library_path": str(library), "nickname": "A8",
