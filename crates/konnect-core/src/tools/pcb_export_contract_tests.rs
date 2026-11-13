@@ -386,10 +386,9 @@ async fn served_explicit_schematic_keeps_kicad_dispatch_but_refuses_ipc() {
 }
 
 fn native_supervisor(directory: &Path, program: &str, seconds: u32) -> PathBuf {
-    assert!(
-        cfg!(target_os = "linux"),
-        "native export acceptance supervision is supported on Linux only"
-    );
+    if !cfg!(target_os = "linux") {
+        panic!("native export acceptance supervision is supported on Linux only");
+    }
     let wrapper = directory.join(format!("supervisor-{}.py", uuid::Uuid::new_v4()));
     std::fs::write(
         &wrapper,
