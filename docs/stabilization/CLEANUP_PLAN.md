@@ -204,10 +204,15 @@ activation, branch protection, release or publication are authorized by this pla
   Rust source compatibility; no new public `Symbol` fields were added.
 - Twenty-one original Kata records are now closed with evidence. Active
   implementation is the bounded A8 native-child refusal `3bqz/emvb`;
-  production/served source review passed, while native tooling corrections,
-  runtime controls and acceptance remain pending. Project-rename safety
-  `svj3/xsz0` is source-qualified; its partial-outcome policy needs selection
-  before implementation.
+  production, served and corrected native-tooling source reviews passed.
+  Runtime controls and native acceptance remain pending, including the
+  original issue's live failing-before reproduction criterion.
+  Project-rename safety `svj3/xsz0` uses the approved snapshot-guarded,
+  truthful partial/uncertain-outcome policy. Its approved no-replace adapter
+  must preserve advertised Windows, macOS and Linux availability, using
+  already-locked `rustix` 1.1.4 on Linux/macOS and `windows-sys` 0.61.2 on
+  Windows. No unsafe fallback is permitted. Implementation and platform gates
+  remain pending; Linux checks do not qualify macOS or Windows runtime behavior.
 - All four retained Dependabot branches were audited against the parent.
   None is incorporated or demonstrably superseded; preserve them. Findings
   are recorded on existing Kata `f0kv`.
