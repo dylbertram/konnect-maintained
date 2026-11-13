@@ -26,7 +26,7 @@ HASHES = {
     Path("crates/konnect-schematic-editor/tests/private_properties.rs"):
         "5e569e9171c5700092fa09b6864fd7c99e77b60f4bb375f55309d9bd041274ec",
     Path("crates/konnect-core/src/tools/sch_private_fields_tests.rs"):
-        "2063bb661c494b1aed65ba5d49259daa5ede112a08d6774d35d63d4aa90cdcb5",
+        "baf8cda0e443085d2e70bc3cf77f328f7f9dbacfaa74f8a6c8b64ab9532be6e7",
     Path("crates/konnect-core/tests/support/pcb_export_supervisor.py"):
         "95108143509ca77a8b3e112ebe6e9386daf33e21712c67afa3213bd57fa0a665",
     Path("crates/konnect-core/tests/fixtures/private_fields.rs"):

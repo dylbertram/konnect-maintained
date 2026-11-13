@@ -325,10 +325,9 @@ async fn served_duplicate_real_name_still_refuses_without_writing() {
 /// Reuse the export gate's tested Linux subreaper, rather than placing a
 /// timeout around a blocking CLI call or duplicating process-group supervision.
 fn private_native_supervisor(directory: &Path, phase: &str, cli: &str, seconds: u32) -> PathBuf {
-    assert!(
-        cfg!(target_os = "linux"),
-        "native private-field supervision requires Linux and Python 3.9+"
-    );
+    if !cfg!(target_os = "linux") {
+        panic!("native private-field supervision requires Linux and Python 3.9+");
+    }
     let wrapper = directory.join(format!("private-native-{phase}.py"));
     std::fs::write(
         &wrapper,
