@@ -3,6 +3,21 @@
 Konnect's tool schemas are public API. This file records intentional argument
 removals and the supported replacement workflow.
 
+## Unreleased: stable schematic read identities
+
+`get_schematic_pin_locations` and `batch_get_schematic_pin_locations` now
+return `mirror_x` and `mirror_y` beside rotation on each unit and on the
+lowest-unit anchor. Pin coordinates and existing fields are unchanged.
+
+Every `list_schematic_labels` entry now includes the native `uuid`. Pass those
+UUIDs to `batch_delete` through `uuids` for selective bulk deletion. Existing
+label type names remain `NetLabel`, `GlobalLabel` and `HierarchicalLabel`.
+These fields are additive; this does not add reused-sheet instance-path targeting.
+
+`batch_delete` guidance now explicitly separates item UUIDs in `uuids` from
+component reference designators in `references`. Selector behavior is unchanged;
+references passed as UUIDs are not silently reinterpreted.
+
 ## Unreleased: saved-board writes refuse stale snapshots
 
 The file fallbacks for `set_board_size`, `add_layer`, `add_board_outline`,

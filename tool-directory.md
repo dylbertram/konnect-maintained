@@ -104,8 +104,8 @@ and Windows servers do not.
 | `move_connected` | Move a symbol and stretch/shrink connected wire stubs to preserve connections. |
 | `move_region` | Move all symbols within a bounding box by a given offset. |
 | `annotate_schematic` | Number `?` designators the way eeschema's Tools → Annotate does (first free number in the project, ascending X per sheet instance, numbers reserved across every instance in the file, both places written). The units of one multi-unit part share one designator. Separate parts sharing a designator are reported as `unresolved` with a `partial` outcome, or renumbered with `resolve_duplicates`; a shared designator that could be a package is never renumbered. Annotates one project's instance records (`project`, default the schematic's owner). Konnect's own implementation; kicad-cli has no annotate command. |
-| `get_schematic_pin_locations` | Get exact (X,Y) coordinates of every pin on every placed unit, accounting for rotation/mirroring, plus each pin's `orientation_degrees` and `length_mm`. |
-| `batch_get_schematic_pin_locations` | Get pin locations for multiple components in a single file read, with the same per-pin fields. |
+| `get_schematic_pin_locations` | Get exact (X,Y) coordinates of every pin on every placed unit, accounting for rotation/mirroring, plus each pin's `orientation_degrees` and `length_mm`. Each unit and the lowest-unit anchor report `mirror_x` and `mirror_y`. |
+| `batch_get_schematic_pin_locations` | Get pin locations for multiple components in a single file read, with the same per-pin fields and per-unit/anchor mirror flags. |
 | `add_component_annotation` | Add or update a custom property across every placed unit of a component. |
 | `group_components` | Add or update a group property across every placed unit of multiple components. |
 | `replace_component` | Replace every placed unit's `lib_id` while preserving and validating its unit number. |
@@ -159,7 +159,7 @@ and Windows servers do not.
 |------|-------------|
 | `list_schematic_wires` | List all wire segments with start/end coordinates and UUIDs. |
 | `list_schematic_nets` | List all distinct net names from net labels, global labels, and power symbols. |
-| `list_schematic_labels` | List all label instances (net/global/hierarchical) with positions, names, and types. |
+| `list_schematic_labels` | List all label instances with native UUIDs, positions, names, and unchanged `NetLabel`/`GlobalLabel`/`HierarchicalLabel` types. |
 | `get_net_connections` | Get all pins and labels connected to a named net. |
 | `get_net_connectivity` | Build the full connectivity graph for a net using union-find. Returns wires, labels, and T-junction locations. |
 | `get_pin_connections` | Get the net connected to a specific pin by tracing wires from the pin endpoint. |
@@ -180,7 +180,7 @@ and Windows servers do not.
 | Tool | Description |
 |------|-------------|
 | `batch_connect_to_net` | Connect many pins to a named net by adding labels at each endpoint, oriented away from the symbol body. `stub_length`, `direction` and `label_type` give `connect_to_net`'s stub and label for every pin in the call. Single read → all edits → single write. |
-| `batch_delete` | Delete multiple schematic items (wires, labels, junctions, components) by UUID or reference — single file write. |
+| `batch_delete` | Delete multiple schematic items in one file write. Pass item UUIDs in `uuids` and component reference designators in `references`. |
 | `bulk_move_schematic_components` | Move multiple components by a uniform dx/dy offset in a single atomic write. Junction dots are re-judged, and a no-connect flag travels with the pin it protects. |
 | `batch_edit_schematic_components` | Update fields or native boolean `dnp` on multiple components in one atomic write. Omit `dnp` to preserve it; inspect saved per-unit readback. Set `create_missing: true` for missing custom fields; built-ins remain update-only. Custom `DNP` fields are refused. |
 | `batch_delete_schematic_components` | Delete multiple components by reference designator in a single atomic write. |
