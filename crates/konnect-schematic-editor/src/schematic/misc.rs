@@ -71,6 +71,12 @@ pub struct Text {
     pub at: At,
     pub uuid: String,
     pub effects: Option<Effects>,
+    /// KiCad's simulation exclusion flag, emitted before `at`.
+    /// `None` preserves absence rather than inventing an explicit `no`.
+    pub exclude_from_sim: Option<bool>,
+    /// Unmodelled trailing arguments, including scalars, in their mutual order.
+    /// Replayed after UUID, not in their original slots among modelled children.
+    pub raw_sub_nodes: Vec<SexpNode>,
 }
 
 impl Text {
@@ -80,12 +86,16 @@ impl Text {
             at: At::new(x, y),
             uuid: uuid::Uuid::new_v4().to_string(),
             effects: None,
+            exclude_from_sim: None,
+            raw_sub_nodes: vec![],
         }
     }
 
     pub fn from_sexp(node: &SexpNode) -> Result<Self> {
         let text = node
-            .value()
+            .args()
+            .first()
+            .and_then(SexpNode::text)
             .ok_or(Error::MissingField("text content"))?
             .to_owned();
         let at = node
@@ -94,20 +104,41 @@ impl Text {
             .ok_or(Error::MissingField("at"))?;
         let uuid = node.get_value("uuid").unwrap_or("").to_owned();
         let effects = node.find("effects").and_then(Effects::from_sexp);
+        let exclude_from_sim = node.get_bool("exclude_from_sim");
+        const MODELLED: &[&str] = &["exclude_from_sim", "at", "effects", "uuid"];
+        // Skip exactly the leading text argument, not every scalar. Future
+        // bare flags and quoted arguments must survive alongside list children.
+        let raw_sub_nodes = node
+            .args()
+            .iter()
+            .skip(1)
+            .filter(|child| !child.tag().is_some_and(|tag| MODELLED.contains(&tag)))
+            .cloned()
+            .collect();
         Ok(Text {
             text,
             at,
             uuid,
             effects,
+            exclude_from_sim,
+            raw_sub_nodes,
         })
     }
 
     pub fn to_sexp(&self) -> SexpNode {
-        let mut c = vec![atom("text"), qstr(self.text.clone()), self.at.to_sexp()];
+        let mut c = vec![atom("text"), qstr(self.text.clone())];
+        if let Some(excluded) = self.exclude_from_sim {
+            c.push(tagged(
+                "exclude_from_sim",
+                vec![atom(if excluded { "yes" } else { "no" })],
+            ));
+        }
+        c.push(self.at.to_sexp());
         if let Some(e) = &self.effects {
             c.push(e.to_sexp());
         }
         c.push(tagged("uuid", vec![qstr(self.uuid.clone())]));
+        c.extend(self.raw_sub_nodes.iter().cloned());
         SexpNode::List(c)
     }
 

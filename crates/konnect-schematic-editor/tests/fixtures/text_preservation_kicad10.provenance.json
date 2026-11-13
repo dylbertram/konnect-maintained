@@ -1,0 +1,10 @@
+{
+  "source_fixture": "crates/konnect-core/tests/fixtures/multichannel_mixer.kicad_sch",
+  "source_sha256": "95d79da90c27ca4600071da822b864603f1004751bf7e0e8fcfc3a2810f2a061",
+  "native_sha256": "1bbd268c32a780f2314fb0a280405be92800086ff2ac1a5cf50b15f5ca266398",
+  "native_version": "10.0.8",
+  "operation": "kicad-cli sch upgrade --force; native kicadsexpr netlist acceptance",
+  "source_revision": "9f5d69ad8f922b80462d9996153a0ac1827a45fd",
+  "cad_scope": "disposable synthetic repository fixture copy only",
+  "line_endings": "LF, actual native output, no normalization"
+}
