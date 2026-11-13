@@ -32,7 +32,7 @@ HASHES = {
     Path("crates/konnect-schematic-editor/tests/support/symbol_serialization.rs"):
         "0e602cbc6cd1871b6a23a6f1c7d3179555f25641e1dde996c6033142c0633d4c",
     Path("crates/konnect-core/tests/symbol_serialization.rs"):
-        "161ad76273fdcdddc36cc0102176eeb5b1f6c3b657b330232f0dea4b036ea106",
+        "72a222c3db3ee37cbc2854c9e71b2f11a002b8fd074ee104507a3f163b56a858",
     Path("crates/konnect-schematic-editor/tests/fixtures/text_preservation_kicad10.kicad_sch"):
         "1bbd268c32a780f2314fb0a280405be92800086ff2ac1a5cf50b15f5ca266398",
     Path("crates/konnect-schematic-editor/tests/fixtures/text_preservation_kicad10.provenance.json"):

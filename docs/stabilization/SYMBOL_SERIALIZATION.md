@@ -227,11 +227,30 @@ Post-correction review SHA-256 values, also refreshed in the control runner:
 - `crates/konnect-schematic-editor/tests/support/symbol_serialization.rs`:
   `0e602cbc6cd1871b6a23a6f1c7d3179555f25641e1dde996c6033142c0633d4c`
 - `crates/konnect-core/tests/symbol_serialization.rs`:
-  `161ad76273fdcdddc36cc0102176eeb5b1f6c3b657b330232f0dea4b036ea106`
+  `72a222c3db3ee37cbc2854c9e71b2f11a002b8fd074ee104507a3f163b56a858`
 
 Format rejection is not a failed regression test or proof of compilation.
-The coordinator still owns format rerun, positive/control/native verification
-and eventual parent integration. This child has not merged the newer parent.
+The coordinator owns verification and parent integration.
+
+### Exact-head stage-one result and platform refusal
+
+The coordinator reported stage one `cmd_2zshusfwghnc` on exact head
+`0729c4ce7048e90f51ee7b3285d2dd23a38b49e4`: formatting passed, all six model
+tests and three served tests passed, then Clippy with -D warnings rejected the
+native helper's assert!(cfg!(target_os = "linux"), ...) as assertions_on_constants.
+The retained result is in the parent at
+`.remote-build-jobs/boat-symbol-verification/stage1-result.json`.
+Native acceptance and controls did not execute because Clippy blocked them.
+Those positive results apply to 0729c4c, not to this subsequent correction.
+
+The native helper now refuses a non-Linux target with if !cfg!(...) followed by
+panic!, matching the existing parent helper pattern without allowing the lint.
+The core test source hash above and its runner pin were refreshed. Production,
+boolean policy and native preservation/connectivity assertions are unchanged.
+No formatter, tests, Clippy, native command or job ran in this child for the
+correction. The coordinator had already integrated 0729c4c; no additional parent
+merge was performed here. Exact-head Clippy rerun, native acceptance and all
+controls remain coordinator-owned and pending.
 
 After explicit capacity admission and dependency/cache preparation:
 

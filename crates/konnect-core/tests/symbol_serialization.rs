@@ -123,7 +123,9 @@ async fn native(
     seconds: u32,
     arguments: &[&str],
 ) -> (std::process::Output, Value) {
-    assert!(cfg!(target_os = "linux"), "native gate requires Linux");
+    if !cfg!(target_os = "linux") {
+        panic!("native gate requires Linux");
+    }
     assert!(Path::new(cli).is_absolute(), "explicit absolute native CLI");
     let wrapper = artifacts.join(format!("symbol-native-{phase}.py"));
     std::fs::write(&wrapper, include_str!("support/pcb_export_supervisor.py")).unwrap();
