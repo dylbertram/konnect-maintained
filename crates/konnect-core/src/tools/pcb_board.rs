@@ -21,11 +21,111 @@ use konnect_sexp::{
     parser::{parse_sexp, SexpNode},
     writer::{
         apply_edits, find_block_with_leading_whitespace, find_direct_child_blocks, new_uuid,
-        write_atomic, SexpEdit,
+        read_consistent, transact_atomic, SexpEdit,
     },
 };
 use serde_json::json;
 use std::path::Path;
+
+#[cfg(test)]
+#[path = "board_revision_tests.rs"]
+mod board_revision_tests;
+
+/// Commit edits planned against the complete saved snapshot, not just the
+/// objects being changed. The caller must establish file authority first.
+///
+/// `write_atomic_if_unchanged` reports both a stale prewrite snapshot and a
+/// postwrite readback mismatch as `Conflict`. The transaction primitive lets
+/// us refuse the former without writing, and report the latter as uncertain.
+/// Its existing document lock and KiCad sibling-lock checks remain in force.
+fn write_board_edits(
+    board: &Path,
+    expected: String,
+    edits: Vec<SexpEdit>,
+    operation: &str,
+) -> anyhow::Result<Option<CallToolResult>> {
+    #[cfg(test)]
+    board_revision_tests::before_write(board);
+
+    let mut intended = None;
+    let result = transact_atomic(board, |current| {
+        if current != expected {
+            return Ok((current.to_owned(), false));
+        }
+        let next = apply_edits(expected, edits);
+        intended = Some(next.clone());
+        Ok((next, true))
+    });
+    #[cfg(test)]
+    let result = board_revision_tests::after_transaction(board, result);
+
+    match result {
+        Ok(false) => Ok(Some(CallToolResult::error_kind(
+            ToolErrorKind::Conflict {
+                paths: vec![board.display().to_string()],
+            },
+            format!(
+                "{operation} refused because '{}' changed since it was read. \
+                 Nothing was written; reload the board and reapply the request.",
+                board.display()
+            ),
+        ))),
+        // The shared writer checks KiCad's lock before replacement. Preserve
+        // that prewrite authority refusal rather than claiming a mutation.
+        Err(error @ konnect_sexp::SexpError::KiCadEditorLocked { .. }) => Err(error.into()),
+        Err(error) if intended.is_some() => {
+            // This includes readback I/O errors and a parent-directory sync
+            // failure after rename, not only the writer's readback Conflict.
+            Ok(Some(uncertain_board_write(board, operation, error)))
+        }
+        Err(error) => Err(error.into()),
+        Ok(true) => {
+            // Independently observe the committed bytes. Do not turn a failed
+            // read into success or a no-write conflict after replacement.
+            match std::fs::read_to_string(board) {
+                Ok(saved) if Some(&saved) == intended.as_ref() => Ok(None),
+                Ok(_) => Ok(Some(uncertain_board_write(
+                    board,
+                    operation,
+                    "saved board differs from the intended snapshot",
+                ))),
+                Err(error) => Ok(Some(uncertain_board_write(board, operation, error))),
+            }
+        }
+    }
+}
+
+fn uncertain_board_write(
+    board: &Path,
+    operation: &str,
+    reason: impl std::fmt::Display,
+) -> CallToolResult {
+    let path = board.display().to_string();
+    let reason = reason.to_string();
+    crate::outcome::attach(
+        CallToolResult::error_kind(
+            ToolErrorKind::MutationOutcomeUncertain {
+                operation: operation.to_owned(),
+                path: path.clone(),
+                reason: reason.clone(),
+            },
+            format!(
+                "{operation} attempted to replace the saved board, but persistence could not \
+                 be verified. The file at '{path}' may have changed; reload and inspect it \
+                 before retrying. {reason}"
+            ),
+        ),
+        crate::outcome::summary(
+            crate::outcome::OutcomeStatus::Uncertain,
+            path,
+            "saved_file_readback",
+            1,
+            0,
+            1,
+            Some(crate::outcome::inspect_before_retry()),
+        ),
+    )
+}
 
 // Build the 4 Edge.Cuts segments forming a rectangle, packed as Any for create_items.
 fn rect_outline_items(x1: f64, y1: f64, x2: f64, y2: f64, w: f64) -> Vec<prost_types::Any> {
@@ -1473,7 +1573,7 @@ async fn handle_set_board_size(
         BoardWrite::File(reason) => reason,
     };
 
-    let content = std::fs::read_to_string(&board_path)?;
+    let content = read_consistent(&board_path)?;
 
     // Locate every existing top-level Edge.Cuts graphic. Plain `gr_line`s are
     // replaced; anything else refuses, because silently deleting an arc or
@@ -1513,8 +1613,9 @@ async fn handle_set_board_size(
     );
     let close_pos = content.rfind(')').unwrap_or(content.len());
     edits.push(SexpEdit::insert(close_pos, lines));
-    let new_content = apply_edits(content, edits);
-    write_atomic(&board_path, &new_content)?;
+    if let Some(error) = write_board_edits(&board_path, content, edits, "set_board_size")? {
+        return Ok(error);
+    }
 
     Ok(CallToolResult::json(&json!({
         "width": width, "height": height,
@@ -1980,7 +2081,7 @@ async fn handle_get_layer_list(
 
 async fn handle_add_layer(
     args: &serde_json::Value,
-    _ctx: &ToolContext,
+    ctx: &ToolContext,
 ) -> anyhow::Result<CallToolResult> {
     let board_path = get_path(args, "board")?;
     let layer_name = match require_str(args, "layer_name") {
@@ -2004,7 +2105,10 @@ async fn handle_add_layer(
         )));
     }
 
-    let content = std::fs::read_to_string(&board_path)?;
+    if let Some(error) = refuse_if_board_open_in_kicad(ctx, &board_path, "layer change").await? {
+        return Ok(error);
+    }
+    let content = read_consistent(&board_path)?;
 
     // Find the (layers ...) block and insert before its closing paren
     let layers_pos = match content.find("(layers") {
@@ -2051,8 +2155,14 @@ async fn handle_add_layer(
     // hardcoding spaces into a file that may be tab-indented.
     let indent = entry_indent(&content, layers_pos).unwrap_or_else(|| "    ".to_string());
     let new_layer = format!("\n{indent}({new_id} \"{layer_name}\" {layer_type})");
-    let new_content = apply_edits(content, vec![SexpEdit::insert(insert_pos, new_layer)]);
-    write_atomic(&board_path, &new_content)?;
+    if let Some(error) = write_board_edits(
+        &board_path,
+        content,
+        vec![SexpEdit::insert(insert_pos, new_layer)],
+        "add_layer",
+    )? {
+        return Ok(error);
+    }
 
     Ok(CallToolResult::json(&json!({
         "added_layer": layer_name, "id": new_id, "type": layer_type
@@ -2223,10 +2333,16 @@ async fn handle_add_board_outline(
 
     let outline = format_outline(&primitives, "Edge.Cuts", w);
 
-    let content = std::fs::read_to_string(&board_path)?;
+    let content = read_consistent(&board_path)?;
     let close_pos = content.rfind(')').unwrap_or(content.len());
-    let new_content = apply_edits(content, vec![SexpEdit::insert(close_pos, outline)]);
-    write_atomic(&board_path, &new_content)?;
+    if let Some(error) = write_board_edits(
+        &board_path,
+        content,
+        vec![SexpEdit::insert(close_pos, outline)],
+        "add_board_outline",
+    )? {
+        return Ok(error);
+    }
 
     Ok(CallToolResult::json(&json!({
         "x1": x1, "y1": y1, "x2": x2, "y2": y2,
@@ -2352,7 +2468,7 @@ async fn handle_delete_graphics(
         ),
         BoardWrite::Refused(result) => return Ok(result),
         BoardWrite::File(reason) => {
-            let content = std::fs::read_to_string(&board_path)?;
+            let content = read_consistent(&board_path)?;
             let matched: Vec<FileGraphic> = read_file_graphics(&content)
                 .into_iter()
                 .filter(|g| filter.matches(&g.uuid, g.kind, &g.layer))
@@ -2367,7 +2483,11 @@ async fn handle_delete_graphics(
                     .iter()
                     .map(|g| SexpEdit::delete(g.span.0, g.span.1))
                     .collect();
-                write_atomic(&board_path, &apply_edits(content, edits))?;
+                if let Some(error) =
+                    write_board_edits(&board_path, content, edits, "delete_graphics")?
+                {
+                    return Ok(error);
+                }
             }
             (graphics, "file", Some(reason))
         }
@@ -2564,10 +2684,16 @@ async fn handle_add_board_text(
     };
 
     let gr_text = format_gr_text(&text, x, y, rotation, &layer, size);
-    let content = std::fs::read_to_string(&board_path)?;
+    let content = read_consistent(&board_path)?;
     let close_pos = content.rfind(')').unwrap_or(content.len());
-    let new_content = apply_edits(content, vec![SexpEdit::insert(close_pos, gr_text)]);
-    write_atomic(&board_path, &new_content)?;
+    if let Some(error) = write_board_edits(
+        &board_path,
+        content,
+        vec![SexpEdit::insert(close_pos, gr_text)],
+        "add_board_text",
+    )? {
+        return Ok(error);
+    }
 
     Ok(CallToolResult::json(&json!({
         "text": text, "x": x, "y": y, "layer": layer, "size": size,
@@ -2667,7 +2793,7 @@ pub(crate) async fn add_zone_impl(
         BoardWrite::File(reason) => reason,
     };
 
-    let content = std::fs::read_to_string(&board_path)?;
+    let content = read_consistent(&board_path)?;
     let tree = konnect_sexp::parse_sexp(&content)?;
     let Some(net) = konnect_sexp::net::net_ref_for_write(&tree, &net_name) else {
         return Ok(CallToolResult::error(format!(
@@ -2683,8 +2809,14 @@ pub(crate) async fn add_zone_impl(
     );
 
     let close_pos = content.rfind(')').unwrap_or(content.len());
-    let new_content = apply_edits(content, vec![SexpEdit::insert(close_pos, zone_sexp)]);
-    write_atomic(&board_path, &new_content)?;
+    if let Some(error) = write_board_edits(
+        &board_path,
+        content,
+        vec![SexpEdit::insert(close_pos, zone_sexp)],
+        "add_zone",
+    )? {
+        return Ok(error);
+    }
 
     let mut body = describe();
     body["source"] = json!("file");
@@ -2749,10 +2881,16 @@ async fn handle_import_svg_logo(
     for polygon in &placed {
         sexp.push_str(&format_gr_poly(polygon, &layer));
     }
-    let content = std::fs::read_to_string(&board_path)?;
+    let content = read_consistent(&board_path)?;
     let close_pos = content.rfind(')').unwrap_or(content.len());
-    let new_content = apply_edits(content, vec![SexpEdit::insert(close_pos, sexp)]);
-    write_atomic(&board_path, &new_content)?;
+    if let Some(error) = write_board_edits(
+        &board_path,
+        content,
+        vec![SexpEdit::insert(close_pos, sexp)],
+        "import_svg_logo",
+    )? {
+        return Ok(error);
+    }
 
     Ok(CallToolResult::json(&json!({
         "polygon_count": placed.len(),
