@@ -93,7 +93,15 @@ activation, branch protection, release or publication are authorized by this pla
   selector/Muse negative controls failed as expected, and disabled eager loading
   was caught. Merged into the parent at `16bb336`; its clean fully merged branch
   and worktree were removed. Evidence was preserved under the parent.
-- Full combined-parent verification is running on `16bb336`.
-- Board guards `cc88c99` and read identities `489a462` await independent review
-  and coordinator verification before integration.
+- Combined-parent job `4dbd7d05-430a-45e0-a4af-630b13ef495b` exposed remaining
+  stale catalogue totals. Corrected those at `f7a9758`; a fresh integration run
+  is in progress.
+- Board guards `cc88c99` received production source-review approval. Job
+  `80b50482-5619-4335-bf40-e1ab494b46bd` confirmed the review's mock-only failure.
+  Correction `fdbd810` is undergoing positive and negative-control verification.
+- Read identities `489a462` received independent source-review approval.
+  Additional CLI worker `bx_nek5s6r8` failed before tests due to its isolated
+  Rust toolchain environment. Its deletion operation
+  `bdop_6ce1b8d27fe0448fa6b0d189811b6aa7` completed, and the local sanitized
+  transfer copy was removed. No test success is claimed from this attempt.
 - The next bounded export child starts from the updated parent, including PR #11.
