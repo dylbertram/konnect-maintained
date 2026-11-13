@@ -246,10 +246,10 @@ def main():
         with tempfile.TemporaryDirectory(prefix="ka6-") as temporary:
             control = Path(temporary)
             home = control / "home"
-            config_home = control / "config"
+            home.mkdir()
+            config_home = home / ".config/kicad"
             versioned = config_home / "10.0"
             versioned.mkdir(parents=True)
-            home.mkdir()
             (versioned / "kicad_common.json").write_text(json.dumps({
                 "meta": {"version": 6}, "api": {"enable_server": True},
                 "graphics": {"canvas_type": 2},
@@ -258,8 +258,21 @@ def main():
             }))
             for name in ["sym-lib-table", "fp-lib-table"]:
                 shutil.copy(Path("/usr/share/kicad/template") / name, versioned / name)
-            shutil.copy(Path("/usr/share/kicad/template/design-block-lib-table"),
-                        versioned / "design-block-lib-table")
+            design_block_template = Path("/usr/share/kicad/template/design-block-lib-table")
+            design_block_table = versioned / "design-block-lib-table"
+            if design_block_template.is_file():
+                shutil.copy(design_block_template, design_block_table)
+                report["design_block_table_setup"] = "installed_template"
+            else:
+                # KiCad 10 supports an empty design-block library configuration.
+                # Match its qa/data/config/10.0/design-block-lib-table fixture:
+                # the native LIB_TABLE grammar allows zero rows and version 7.
+                # This is only first-run configuration inside our disposable
+                # HOME, not CAD, component data or an expected-result artifact.
+                design_block_table.write_text(
+                    "(design_block_lib_table\n  (version 7)\n)\n"
+                )
+                report["design_block_table_setup"] = "empty_disposable_home"
             environment = {**os.environ, "HOME": str(home),
                            "XDG_CONFIG_HOME": str(home / ".config"),
                            "XDG_DATA_HOME": str(home / ".local/share"),

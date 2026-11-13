@@ -58,6 +58,15 @@ remote run then stopped on two Rust formatting differences before tests.
 Both reported differences are corrected by patch here. No local formatter,
 test or job was run for this follow-up; all runtime acceptance remains pending.
 
+Coordinator verification of `d612c964` subsequently passed formatting, focused
+`a6_`, `library_footprint`, `pcb_sync` and `pcb_footprint_update` tests, workspace
+Clippy and the debug build. Native command `cmd_yexsr7rgt9op` exited 1 before
+production because `/usr/share/kicad/template/design-block-lib-table` was absent.
+Installing `kicad-templates` 10.0.8 in `cmd_xjbjz4lf7k1m` did not supply it.
+That is a configuration-layout assumption in the helper, not field acceptance
+evidence or proof that KiCad's design-block capability is unavailable. The
+minimal helper correction below has not been executed by the child.
+
 ## Source review and replacement boundary
 
 The archived #820 record has three discussion comments, zero formal reviews and
@@ -182,6 +191,30 @@ properties but are not a paired library-to-IPC angle oracle.
 capture. It requires Linux, Python with KiCad 10 `pcbnew`, a compiled Konnect
 binary, installed libraries/templates, PCB Editor and Xvfb. Missing prerequisites
 fail rather than skip. No packages are installed by the script.
+
+The symbol and footprint template tables remain required. The design-block
+template is optional: A6a does not use any design-block library. KiCad's native
+[first-run configuration model](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/include/dialogs/panel_global_lib_table_config.h#L30-L38)
+explicitly offers `EMPTY` alongside `DEFAULT` and `CUSTOM`.
+Its [library-table grammar](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/include/libraries/library_table_grammar.h#L119-L125)
+accepts an optional version and zero library rows, and its checked-in
+[KiCad 10 configuration fixture](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/qa/data/config/10.0/design-block-lib-table)
+is exactly:
+
+```text
+(design_block_lib_table
+  (version 7)
+)
+```
+
+The helper copies the installed design-block template if present. Otherwise it
+writes that valid empty configuration only under its disposable
+`HOME/.config/kicad/10.0`, selected through `KICAD_CONFIG_HOME`, and records
+`design_block_table_setup` in `native-fields.json`. It does not modify the
+worker's real user configuration, install another package, fabricate CAD or
+alter any native expected data. Native editor readiness is still checked
+through IPC; configuration does not substitute for a functioning editor.
+No extra installation is required to resolve this missing optional template.
 
 The helper loads the existing native socket through `pcbnew.FootprintLoad`,
 authors four library variants through the native model and `FootprintSave`,
