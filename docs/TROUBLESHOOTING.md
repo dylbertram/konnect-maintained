@@ -429,8 +429,10 @@ the lock. Remove a confirmed stale lock manually only as a last resort.
 
 Multi-file schematic changes persist a `.konnect-transaction-<id>.json`
 write-ahead journal in the project before changing any target. On restart,
-Konnect safely completes files that still match either the recorded before
-image or intended replacement. It never overwrites a file changed by KiCad or
+Konnect recovers files that still match either the recorded before
+image or intended replacement. Ordinary version-1 transactions complete pending
+writes. Version-2 cross-sheet transfers restore their before images instead.
+The status command reports that recovery direction. Konnect never overwrites a file changed by KiCad or
 another process after the journal was written.
 
 Inspect active journals without printing their contents:
@@ -502,7 +504,7 @@ callable tools, the fix is to make the *first* listing complete:
 ```
 
 in `konnect.toml` in the working directory, or a `settings.json` beside the binary. Every toolset is then loaded at
-startup, so `tools/list` carries all 235 tools from the first call.
+startup, so `tools/list` carries all 236 tools from the first call.
 
 It is off by default because it costs what the router exists to save: roughly
 25K tokens per listing instead of ~2K. Turn it on only if your client needs it.
