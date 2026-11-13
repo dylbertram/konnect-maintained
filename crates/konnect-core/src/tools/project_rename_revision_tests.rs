@@ -191,7 +191,9 @@ fn assert_refusal_envelope(result: &CallToolResult) -> Value {
         "assertion failed: designated envelope assertion: refusal must be JSON before inspecting accounting"
     );
     let body = parsed.unwrap();
-    let message_present = body["message"].as_str().is_some_and(|text| !text.is_empty());
+    let message_present = body["message"]
+        .as_str()
+        .is_some_and(|text| !text.is_empty());
     assert!(
         result.is_error && message_present,
         "assertion failed: designated envelope assertion: error flag and original refusal must survive: {body}"

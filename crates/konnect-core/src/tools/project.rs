@@ -1469,7 +1469,8 @@ fn rename_outcome(
         // corrects the shared helper's whole-operation no-change wording.
         // RENAME_PROJECT_LOCK_WORDING_BEGIN
         if matches!(
-            body.pointer("/error/reason").and_then(serde_json::Value::as_str),
+            body.pointer("/error/reason")
+                .and_then(serde_json::Value::as_str),
             Some("kicad_project_lock_present" | "kicad_project_lock_unreadable")
         ) {
             let detail = body["message"].as_str().unwrap_or_default();

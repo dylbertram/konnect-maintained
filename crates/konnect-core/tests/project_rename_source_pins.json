@@ -1,8 +1,8 @@
 {
   "Cargo.lock": "002191e110204f5330e861fa8a00a04911110c3466d9e612f96d445a992dee26",
   "crates/konnect-core/Cargo.toml": "b39d4ef6be54474bf5fbc941559cdd88373b385dac07eb0ab60bf4514a4cbcd1",
-  "crates/konnect-core/src/tools/project.rs": "f843e1039d665f8c1ad17df61f1cd5f27ffa638e255eda5b012a8666ade1625e",
-  "crates/konnect-core/src/tools/project_rename_revision_tests.rs": "05d827749ac0f3bbcbdf0d9f053b2643652c493976a6aec36bea6600383c142c",
+  "crates/konnect-core/src/tools/project.rs": "94c5364092e6f4e6b37b5eb284f3c3998b3da4cc12978f68ee66f2c5ae99d6cd",
+  "crates/konnect-core/src/tools/project_rename_revision_tests.rs": "ad7b22fa578f5f93c287e6de06d2670bab77d6b3b50027241f7cf703bd27eeb2",
   "crates/konnect-core/src/tools/pcb_board.rs": "fc72443455fd03795e2858dd4d6d0c1b6ee95e025d68424a9337075507c6c452",
   "crates/konnect-core/src/tools/live_board.rs": "b3a774e8225aa5942762bb2c5f5b24abfd3581e575a471d19c47c82728a19142",
   "crates/konnect-core/src/outcome.rs": "7e4199dbdc2c31660dfcdae6b4a363dbd53d50d8da0334679e76dc27b287d943",
