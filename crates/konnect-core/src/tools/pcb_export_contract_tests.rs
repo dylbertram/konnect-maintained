@@ -279,12 +279,8 @@ async fn served_missing_default_board_names_path_without_cli_or_output() {
         let fixture = Fixture::new().await;
         let missing = fixture.output("missing.kicad_pcb");
         let output = fixture.output("missing-output");
-        let (failed, body) = call(
-            &fixture.api,
-            tool,
-            json!({"board":missing,"output":output}),
-        )
-        .await;
+        let (failed, body) =
+            call(&fixture.api, tool, json!({"board":missing,"output":output})).await;
         assert!(failed, "{body}");
         assert!(body.to_string().contains(missing.to_str().unwrap()));
         assert!(!fixture.log.exists());
@@ -339,12 +335,18 @@ async fn served_unknown_netlist_formats_and_pcb_kicad_refuse_without_guessing() 
         assert_eq!(body["error"]["kind"], "invalid_argument");
         assert_eq!(body["error"]["field"], "format");
         if format.is_none() || format == Some(json!("kicad")) {
-            assert!(body["message"].as_str().unwrap().contains("generate_netlist"));
+            assert!(body["message"]
+                .as_str()
+                .unwrap()
+                .contains("generate_netlist"));
             assert!(body["message"].as_str().unwrap().contains("No sibling"));
         }
         assert!(!fixture.log.exists());
         assert_eq!(std::fs::read_to_string(output).unwrap(), "output sentinel");
-        assert_eq!(std::fs::read_to_string(sibling).unwrap(), "schematic sentinel");
+        assert_eq!(
+            std::fs::read_to_string(sibling).unwrap(),
+            "schematic sentinel"
+        );
         fixture.assert_board_unchanged();
     }
 }
@@ -473,8 +475,7 @@ async fn wait_for_test_file(path: &Path) {
 async fn assert_supervisor_cleanup(wrapper: &Path, stub: &Path) {
     let pids_path = stub.with_extension("pids.json");
     wait_for_test_file(&pids_path).await;
-    let pids: Vec<u32> =
-        serde_json::from_slice(&std::fs::read(&pids_path).unwrap()).unwrap();
+    let pids: Vec<u32> = serde_json::from_slice(&std::fs::read(&pids_path).unwrap()).unwrap();
     let audit = wrapper.with_extension("audit");
     let invocation = std::fs::read_dir(audit)
         .unwrap()
@@ -484,8 +485,7 @@ async fn assert_supervisor_cleanup(wrapper: &Path, stub: &Path) {
         .path();
     let finished = invocation.join("finished.json");
     wait_for_test_file(&finished).await;
-    let finished: Value =
-        serde_json::from_slice(&std::fs::read(finished).unwrap()).unwrap();
+    let finished: Value = serde_json::from_slice(&std::fs::read(finished).unwrap()).unwrap();
     assert_eq!(finished["timed_out"], true);
     assert_eq!(finished["status"], -9, "native leader must be killed");
     assert_eq!(finished["group_reaped"], true);
@@ -614,11 +614,7 @@ async fn pdf_pixels(path: &Path, prefix: &Path) -> Vec<u8> {
         &std::env::var("KONNECT_TEST_PDFINFO").unwrap_or_else(|_| "pdfinfo".into()),
         60,
     );
-    let info = native_command(
-        info_wrapper.to_str().unwrap(),
-        &[path.to_str().unwrap()],
-    )
-    .await;
+    let info = native_command(info_wrapper.to_str().unwrap(), &[path.to_str().unwrap()]).await;
     let info = String::from_utf8(info.stdout).unwrap();
     let pages = info
         .lines()
@@ -793,7 +789,11 @@ async fn native_pcb_export_artifact_acceptance() {
     let netlist = std::fs::read_to_string(output).unwrap();
     let netlist = konnect_sexp::parser::parse_sexp(&netlist).unwrap();
     assert_eq!(netlist.head(), Some("export"));
-    assert!(!netlist.find("components").unwrap().find_all("comp").is_empty());
+    assert!(!netlist
+        .find("components")
+        .unwrap()
+        .find_all("comp")
+        .is_empty());
     assert_eq!(std::fs::read_to_string(schematic).unwrap(), source);
     assert_eq!(std::fs::read_to_string(board).unwrap(), BOARD);
 }

@@ -85,7 +85,10 @@ fn front_view_layers(board_source: &str) -> anyhow::Result<Vec<String>> {
     const FRONT_VIEW: [&str; 4] = ["F.Cu", "F.Mask", "F.SilkS", "Edge.Cuts"];
     let board = konnect_sexp::parser::parse_sexp(board_source)?;
     anyhow::ensure!(board.head() == Some("kicad_pcb"), "expected a KiCad PCB");
-    anyhow::ensure!(board.find("layers").is_some(), "board has no (layers) table");
+    anyhow::ensure!(
+        board.find("layers").is_some(),
+        "board has no (layers) table"
+    );
     let declared = konnect_sexp::layers::layers(&board);
     let selected = FRONT_VIEW
         .into_iter()
