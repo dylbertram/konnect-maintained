@@ -88,6 +88,12 @@ activation, branch protection, release or publication are authorized by this pla
   Imported it into `cleanup/main` at `c3d357f` before accepting any cleanup child.
   Retained the independently integrated editor-shutdown feature and reconciled
   documentation counts. Combined-tree verification remains pending.
-- Documentation child `6f77284` has independent source-review approval;
-  remote positive and negative-control checks are running before acceptance.
-- No cleanup implementation child has been merged or removed yet.
+- Documentation child `6f77284` passed independent review and Boat job
+  `88cc69f6-ccd5-4814-b38f-d1c037ed2707`: four positive regressions passed,
+  selector/Muse negative controls failed as expected, and disabled eager loading
+  was caught. Merged into the parent at `16bb336`; its clean fully merged branch
+  and worktree were removed. Evidence was preserved under the parent.
+- Full combined-parent verification is running on `16bb336`.
+- Board guards `cc88c99` and read identities `489a462` await independent review
+  and coordinator verification before integration.
+- The next bounded export child starts from the updated parent, including PR #11.
