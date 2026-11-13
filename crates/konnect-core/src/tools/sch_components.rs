@@ -36,6 +36,10 @@ use konnect_sexp::{
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+#[path = "sch_private_fields_tests.rs"]
+mod private_fields_tests;
+
 pub fn tools() -> Vec<ToolDef> {
     vec![
         tool!(
@@ -1119,11 +1123,15 @@ pub(crate) fn component_target_from_source(
             .map_err(|error| ComponentDeleteTargetError::from_sexp(path, error))?;
         let mut fields = BTreeMap::new();
         for property in node.find_all("property") {
-            let Some(name) = property.get(1).and_then(|value| value.as_str()) else {
+            // Only the bare atom is a flag. A quoted "private" is a field name.
+            let offset = usize::from(
+                matches!(property.get(1), Some(konnect_sexp::SexpNode::Atom(flag)) if flag == "private"),
+            );
+            let Some(name) = property.get(1 + offset).and_then(|value| value.as_str()) else {
                 continue;
             };
             let value = property
-                .get(2)
+                .get(2 + offset)
                 .and_then(|value| value.as_str())
                 .unwrap_or_default();
             if fields.insert(name.to_owned(), value.to_owned()).is_some() {
@@ -2373,6 +2381,51 @@ fn closing_quote(content: &str, value_start: usize) -> Option<usize> {
     None
 }
 
+/// Locate a direct placed property without mistaking a bare private flag for
+/// its name, or matching property-looking text inside another field's value.
+/// The returned offsets bound the value's contents, excluding its quotes.
+fn placed_property_value_span(
+    block: &str,
+    field: &str,
+) -> Result<Option<(usize, usize, usize)>, String> {
+    for (start, end) in find_direct_child_blocks(block, "symbol") {
+        let source = &block[start..end];
+        let node = parse_sexp(source).map_err(|error| error.to_string())?;
+        if node.head() != Some("property") {
+            continue;
+        }
+        let offset = usize::from(
+            matches!(node.get(1), Some(konnect_sexp::SexpNode::Atom(flag)) if flag == "private"),
+        );
+        if node.get(1 + offset).and_then(|name| name.as_str()) != Some(field) {
+            continue;
+        }
+        if !matches!(node.get(1 + offset), Some(konnect_sexp::SexpNode::Str(_)))
+            || !matches!(node.get(2 + offset), Some(konnect_sexp::SexpNode::Str(_)))
+        {
+            return Err(format!("'{field}' property needs a quoted name and value"));
+        }
+        // Native schematic properties quote both name and value. Work within
+        // this direct child's bounds so malformed input cannot consume a sibling.
+        let name_start = source
+            .find('"')
+            .ok_or_else(|| format!("'{field}' property has no quoted name"))?
+            + 1;
+        let name_end = closing_quote(source, name_start)
+            .ok_or_else(|| format!("'{field}' property has an unterminated name"))?;
+        let after_name = &source[name_end + 1..];
+        let value = after_name.trim_start();
+        if !value.starts_with('"') {
+            return Err(format!("'{field}' property has no quoted value"));
+        }
+        let value_start = source.len() - value.len() + 1;
+        let value_end = closing_quote(source, value_start)
+            .ok_or_else(|| format!("'{field}' property has an unterminated value"))?;
+        return Ok(Some((start + value_start, start + value_end, end)));
+    }
+    Ok(None)
+}
+
 /// Build the insertion for a custom property in one placed unit's block.
 ///
 /// The property is anchored at that unit's own placement and inherits its
@@ -2471,8 +2524,6 @@ pub(crate) fn set_property_value(
         return Err(format!("symbol '{reference}' not found in this schematic"));
     }
 
-    let escaped_field = escape_property_text(field);
-    let field_search = format!(r#"(property "{escaped_field}" ""#);
     let escaped_value = escape_property_text(new_value);
     let mut edits = Vec::new();
     let mut updated = 0;
@@ -2480,13 +2531,10 @@ pub(crate) fn set_property_value(
 
     for (start, end) in blocks {
         let block = &content[start..end];
-        if let Some(relative) = block.find(&field_search) {
-            let value_start = start + relative + field_search.len();
-            let value_end = closing_quote(content, value_start)
-                .ok_or_else(|| format!("'{field}' property on '{reference}' is malformed"))?;
+        if let Some((value_start, value_end, _)) = placed_property_value_span(block, field)? {
             edits.push(SexpEdit::replace(
-                value_start,
-                value_end,
+                start + value_start,
+                start + value_end,
                 escaped_value.clone(),
             ));
             updated += 1;
@@ -2599,8 +2647,6 @@ fn set_property_placement(
             "symbol '{reference}' not found in this schematic"
         )));
     }
-    let escaped_field = escape_property_text(field);
-    let field_search = format!(r#"(property "{escaped_field}" ""#);
     let mut edits = Vec::new();
     let mut touched = 0usize;
 
@@ -2620,31 +2666,20 @@ fn set_property_placement(
                 continue;
             }
         }
-        let Some(relative) = block.find(&field_search) else {
+        let Some((_, value_end, prop_end)) =
+            placed_property_value_span(block, field).map_err(PlacementRefusal::MalformedFile)?
+        else {
             return Err(PlacementRefusal::TargetMissing(format!(
                 "'{reference}' has no '{field}' property on one of its placed units"
             )));
         };
-        let (_prop_start, prop_end) =
-            konnect_sexp::writer::find_enclosing_block(content, "property", start + relative)
-                .ok_or_else(|| {
-                    PlacementRefusal::MalformedFile(format!(
-                        "'{field}' property on '{reference}' is malformed"
-                    ))
-                })?;
-
         // Everything below searches for tokens *after* the property's value
         // string. A field value is arbitrary text and may contain "(at " or
         // "(hide " — searching the whole property block rewrites the value
         // instead of the placement, and the result is still valid
         // S-expression, so nothing downstream notices.
-        let value_start = start + relative + field_search.len();
-        let value_end = closing_quote(content, value_start).ok_or_else(|| {
-            PlacementRefusal::MalformedFile(format!(
-                "'{field}' property on '{reference}' is malformed"
-            ))
-        })?;
-        let body_start = value_end + 1;
+        let prop_end = start + prop_end;
+        let body_start = start + value_end + 1;
         let property = &content[body_start..prop_end];
 
         // The field's own (at x y [rot]); a property carries exactly one.
