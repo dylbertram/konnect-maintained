@@ -39,6 +39,25 @@ the corrected child, not that first commit:
 These are source corrections and proposed controls, not claims of execution.
 No local toolchain commands, builds, tests or jobs were run for this correction.
 
+Subsequent review of parent-refreshed `c4a1d90` found that the native
+`FallbackLocked` precondition did not survive saving. KiCad's
+[field writer](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp#L1243-L1255)
+emits properties separately from ordinary text; the latter's locked-clause
+serialization cannot establish a PCB_FIELD lock in the saved library.
+The helper now uses `FallbackDuplicate`, renaming the existing custom
+AssemblyVendor field to KiLib_Generator through native `PCB_FIELD::SetName`.
+The field writer iterates every field and writes its canonical name without
+deduplicating. Immediately after native `FootprintSave`, a read-only assertion
+requires exactly two saved `(property "KiLib_Generator" …)` entries and records
+`fallback-native-precondition.json`. If the installed KiCad does not persist
+that case, the gate fails before sync rather than editing the CAD artifact.
+
+Coordinator provisioning initially requested nonexistent `python3-kicad`;
+the existing setup subsequently confirmed pcbnew 10.0.8. The exact `c4a1d90`
+remote run then stopped on two Rust formatting differences before tests.
+Both reported differences are corrected by patch here. No local formatter,
+test or job was run for this follow-up; all runtime acceptance remains pending.
+
 ## Source review and replacement boundary
 
 The archived #820 record has three discussion comments, zero formal reviews and
@@ -170,11 +189,14 @@ then registers their project-local library through the public Konnect tool.
 Its visible custom field also checks for duplicate ordinary-text drawings.
 It creates a new synthetic project through public tools. The live sync runs
 through stdio MCP with real `kicad-cli` and the helper's own headless PCB Editor.
-`save_project` saves the native result. `FallbackLocked` is authored by setting
-the hidden generator field's native lock and saving it with KiCad. It must
-produce exactly the named fallback diagnostic for R903, with no additional
-`board_readback_differs` from the template's omitted widths. Its saved fields
-are captured separately; template fallback is not claimed as library fidelity.
+`save_project` saves the native result. `FallbackDuplicate` is authored by
+renaming the existing visible custom AssemblyVendor field to KiLib_Generator
+and saving it alongside the original hidden KiLib_Generator field. The helper
+asserts that both names were actually persisted before testing the fallback.
+It must produce exactly the duplicate-name fallback diagnostic for R903, with
+no additional `board_readback_differs` from the template's omitted widths.
+Its saved fields are captured separately; template fallback is not claimed
+as library fidelity.
 
 The native control operation is explicit: load a front-side library footprint
 at orientation zero, add it to a native board, translate it to its anchor,
@@ -249,6 +271,7 @@ Request artifact `target/a6-native-evidence.tar.gz`. Key contents:
   passed/failed/incomplete status;
 - `native-operation-control.kicad_pcb` and `native-operation-control.json`;
 - `fallback-native-fields.json`;
+- `fallback-native-precondition.json`, proving the native-saved duplicate names;
 - `served-responses.json`, `konnect.log` and both editor logs;
 - `sync-native-saved.kicad_pcb` and `sync-native-control.kicad_pcb`;
 - `refresh-native-before.kicad_pcb`, `refresh-native-saved.kicad_pcb` and

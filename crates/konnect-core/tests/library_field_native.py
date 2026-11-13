@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import selectors
 import shutil
 import subprocess
@@ -282,7 +283,7 @@ def main():
             fixture_dir = ROOT / "crates/konnect-core/tests/fixtures"
             for name, angle, upright in [
                 ("Raw180", 180, False), ("Raw0", 0, False),
-                ("Upright0", 0, True), ("FallbackLocked", 0, True),
+                ("Upright0", 0, True), ("FallbackDuplicate", 0, True),
             ]:
                 fp = pcbnew.FootprintLoad(str(fixture_dir), "socket_kicad10")
                 assert fp is not None
@@ -295,14 +296,35 @@ def main():
                     field.SetTextThickness(pcbnew.FromMM(0.19))
                     if field.GetName() == "AssemblyVendor":
                         field.SetVisible(True)
-                    if name == "FallbackLocked" and field.GetName() == "KiLib_Generator":
-                        # Hidden unsupported property, authored by KiCad itself.
-                        # Sync must take its diagnostic fallback and accept native
-                        # materialization of the template's omitted stroke width.
-                        field.SetLocked(True)
-                assert any(f.GetName() == "AssemblyVendor" for f in fp.GetFields())
+                        if name == "FallbackDuplicate":
+                            # PCB_FIELD locks are not persisted by the field writer.
+                            # Duplicate custom names are: it emits each field using
+                            # its canonical name. Rename through KiCad's model only.
+                            field.SetName("KiLib_Generator")
+                if name == "FallbackDuplicate":
+                    assert sum(f.GetName() == "KiLib_Generator" for f in fp.GetFields()) == 2
+                else:
+                    assert any(f.GetName() == "AssemblyVendor" for f in fp.GetFields())
                 pcbnew.FootprintSave(str(library), fp)
-                assert (library / f"{name}.kicad_mod").is_file()
+                saved_library = library / f"{name}.kicad_mod"
+                assert saved_library.is_file()
+                if name == "FallbackDuplicate":
+                    # Assert the actual saved precondition, not just model state.
+                    # Never rewrite this native artifact to manufacture the case.
+                    occurrences = len(re.findall(
+                        r'\(\s*property\s+"KiLib_Generator"(?=\s|\))',
+                        saved_library.read_text(),
+                    ))
+                    assert occurrences == 2, ("native duplicate-name precondition", occurrences)
+                    precondition = {
+                        "footprint_id": "A6:FallbackDuplicate",
+                        "property_name": "KiLib_Generator",
+                        "saved_property_occurrences": occurrences,
+                    }
+                    report["fallback_precondition"] = precondition
+                    (out / "fallback-native-precondition.json").write_text(
+                        json.dumps(precondition, indent=2)
+                    )
             report["native_operation_control"] = native_operation_control(library, out)
             api.call("register_footprint_library", {
                 "library_path": str(library), "nickname": "A6",
@@ -314,7 +336,7 @@ def main():
                  "footprint": f"A6:{name}", "value": "native-a6"}
                 for ref, name, x in [
                     ("R901", "Raw180", 50.8), ("R902", "Upright0", 76.2),
-                    ("R903", "FallbackLocked", 101.6),
+                    ("R903", "FallbackDuplicate", 101.6),
                 ]
             ]})
             board = project / "a6.kicad_pcb"
@@ -331,8 +353,9 @@ def main():
             diagnostic = applied["diagnostics"][0]
             assert diagnostic["code"] == "library_fields_not_carried", applied
             assert diagnostic["references"] == ["R903"], applied
-            assert diagnostic["footprint_id"] == "A6:FallbackLocked", applied
-            assert "locked" in diagnostic["message"], applied
+            assert diagnostic["footprint_id"] == "A6:FallbackDuplicate", applied
+            assert "KiLib_Generator" in diagnostic["message"], applied
+            assert "appears more than once" in diagnostic["message"], applied
             api.call("save_project", {})
             stop_editor(editor)
             editor = None

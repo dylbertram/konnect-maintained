@@ -5499,7 +5499,10 @@ mod tests {
         assert_eq!(diagnostics[0]["code"], "library_fields_not_carried");
         let sent = served.created.lock().unwrap()[0].clone();
         let kept = read_back(&sent, Readback::CanonicalTextDefaults);
-        assert_ne!(sent, kept, "the canonicalizing mock must not echo the message");
+        assert_ne!(
+            sent, kept,
+            "the canonicalizing mock must not echo the message"
+        );
         let sent = FootprintInstance::decode(sent.value.as_slice()).unwrap();
         let kept = FootprintInstance::decode(kept.value.as_slice()).unwrap();
         let mut field = sent.value_field.unwrap();
@@ -5529,10 +5532,7 @@ mod tests {
             .attributes
             .as_ref()
             .unwrap();
-        assert_eq!(
-            kept_attributes.stroke_width.as_ref().unwrap().value_nm,
-            0
-        );
+        assert_eq!(kept_attributes.stroke_width.as_ref().unwrap().value_nm, 0);
         let absent = FieldShape::of(&field);
         let canonical = FieldShape::of(&kept);
         assert_eq!(absent.angle, 0.0);
