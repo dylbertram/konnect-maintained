@@ -60,6 +60,11 @@ separate entries, and the instance lists are always given in full — those are
 what a repair has to write back. Read it as prose, not as a parsed list: to
 enumerate every affected symbol, inspect the file.
 
+For a uniform obsolete root prefix with otherwise correct paths, references and
+units, use the explicit, dry-run-first
+[instance-root repair](INSTANCE_ROOT_REPAIR.md). It preserves the canonical
+root UUID and refuses other stale metadata; placement does not repair it silently.
+
 ## Unreleased notes (next minor release)
 
 Schematics that previously inherited an unrelated ancestor project's libraries,
