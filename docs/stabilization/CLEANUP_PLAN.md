@@ -2,7 +2,7 @@
 
 ## Steps
 
-- [ ] Complete wave 1: small documentation fixes, stable read identities and board stale-write protection.
+- [x] Complete wave 1: small documentation fixes, stable read identities and board stale-write protection.
 - [ ] Review wave 1, verify failing-before/passing-after regressions, and integrate every accepted child into `cleanup/main`.
 - [ ] Complete wave 2: export correctness and bounded schematic connectivity/preservation fixes.
 - [ ] Correct the footprint-field foundation, then complete only preservation-safe propagation.
@@ -105,3 +105,19 @@ activation, branch protection, release or publication are authorized by this pla
   `bdop_6ce1b8d27fe0448fa6b0d189811b6aa7` completed, and the local sanitized
   transfer copy was removed. No test success is claimed from this attempt.
 - The next bounded export child starts from the updated parent, including PR #11.
+- Board guards passed job `4f0c78f6-1b93-4180-abcb-799f88b00157`, including
+  missing-guard negative control, writer tests and Clippy. Merged at `4bb3d66`.
+- Read identities passed job `3f040888-6cca-467b-9949-91b797f71b16`, including
+  failing-before and mutation controls. Merged at `b1c0b3c`.
+  Both completed child branches/worktrees were removed; evidence is in the parent.
+- Full combined-parent tests and Clippy passed on `f7a9758`; doctests could not
+  start because the executor lacked a `rustdoc` executable-path entry.
+  A new combined-parent run includes both accepted fixes and explicit rustdoc
+  discovery. Doctests/Python results remain pending.
+- Reusable no-secret Boat image `konnect-rust-1-96` is ready at snapshot
+  `2654d199-a5cb-4aa6-b7f4-6204d76085d9`. Rust, Cargo and rustdoc report 1.96.0;
+  an actual rustdoc smoke test passed. The source-free image builder sandbox was
+  deleted, with completed operation `bdop_f23069362a4d491e816546b21b4dacd8`.
+  Existing executor images are not claimed changed by saving this snapshot.
+- Export acceptance corrections remain in progress after review.
+  New bounded children cover private fields and routed foreign-net protection.
