@@ -36,6 +36,39 @@ See `docs/stabilization/NATIVE_FOOTPRINT_CHILDREN.md` for scope, fixture
 provenance and coordinator-owned verification gates. Native acceptance is
 pending, not established by the imported fixture or mock tests.
 
+## Unreleased: placed schematic symbols preserve optional attribute syntax
+
+`konnect_schematic_editor::Symbol` keeps every existing public field and type.
+There are no new fields, constructor changes or tool-schema changes. Existing
+exhaustive struct literals and destructuring remain source-compatible.
+
+The parser now retains original `fields_autoplaced` clauses in the existing
+`raw_sub_nodes`. Unrelated writes preserve `yes`, `no`, bare, opaque and malformed
+syntax, including duplicates. The effective bool is false for absence and a
+single unquoted `no`, and true for bare/`yes`. Opaque or malformed clauses keep
+the old presence-based true fallback. The first clause determines that view
+when duplicates exist. Explicit `no` therefore now reads as false rather than
+true. This is a behavioral correction, not unchanged parsing behavior.
+
+When the bool differs from the effective value of the first retained raw clause,
+serialization replaces all autoplacement clauses with one canonical `yes` or
+`no`. A fresh true bool writes `yes`; fresh default false writes no clause.
+Assigning an already-equal bool does not record edit intent, and cannot remove a
+clause, normalize an opaque value or distinguish explicit `no` from absence.
+Those syntax-level edits require changing the existing raw nodes as well.
+
+Retained `body_style` follows `unit`, `in_pos_files` follows `on_board`, and
+`fields_autoplaced` follows `dnp`, before UUID. Unsupported values are retained
+as raw nodes rather than parsed away; absent attributes are not invented.
+These known nodes are excluded from tail replay to prevent duplicates. Other
+unknown children retain their contents and mutual order, not arbitrary original
+positions among modelled children.
+
+Exact untouched-symbol block bytes are the oracle on the unchanged native LF
+fixture, not whole-file or older-format byte identity. No point wrapping, Sheet,
+label, Text or generic-writer changes are included. Verified scope and
+reproduction gates are in `docs/stabilization/SYMBOL_SERIALIZATION.md`.
+
 ## Unreleased: schematic sync additions carry library fields
 
 `update_pcb_from_schematic` additions now carry the library's Reference/Value

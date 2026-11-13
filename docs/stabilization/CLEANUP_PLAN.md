@@ -4,7 +4,7 @@
 
 - [x] Complete wave 1: small documentation fixes, stable read identities and board stale-write protection.
 - [x] Review wave 1, verify failing-before/passing-after regressions, and integrate every accepted child into `cleanup/main`.
-- [ ] Complete wave 2: export correctness and bounded schematic connectivity/preservation fixes.
+- [x] Complete the selected wave-2 export, route, private-field, text and symbol scopes; other packet remainders stay open.
 - [ ] Correct the footprint-field foundation, then complete only preservation-safe propagation.
 - [ ] Reconcile remaining fix packets against current source and available native/platform evidence.
 - [ ] Run final integration checks, reconcile Kata evidence, and remove completed child branches/worktrees.
@@ -194,10 +194,20 @@ activation, branch protection, release or publication are authorized by this pla
   superseded. After native/parent acceptance, its remote SHA was rechecked at
   `63123625e1e4512cdca3cce1ac5ab4997db3ee4d` and deletion used an exact-SHA
   lease. The subsequent remote query confirmed absence.
-- Nineteen original Kata records are now closed with evidence. Active symbol
-  serialization work is `qpq3/4nj5`. The user approved preserving raw syntax
-  unless its existing bool is deliberately changed, then emitting canonical
-  yes/no. No new public `Symbol` fields are authorized or needed.
+- Symbol candidate `938e8d8` passed six model/three served tests, workspace
+  Clippy, native acceptance and all 15 controls, including failing-before.
+  Merged at `bbf475c`; the clean merged child was removed. Full post-merge
+  `cmd_uzwksvy4rxqz` passed workspace/build/Clippy/docs/Python and every accepted
+  native gate, including field lifecycle/root cleanup. Evidence is retained in
+  `.remote-build-jobs/boat-symbol-verification/`.
+  `qpq3/4nj5` are closed. The user-approved raw-syntax/bool policy preserves
+  Rust source compatibility; no new public `Symbol` fields were added.
+- Twenty-one original Kata records are now closed with evidence. Active
+  implementation is the bounded A8 native-child refusal `3bqz/emvb`;
+  production/served source review passed, while native tooling corrections,
+  runtime controls and acceptance remain pending. Project-rename safety
+  `svj3/xsz0` is source-qualified; its partial-outcome policy needs selection
+  before implementation.
 - All four retained Dependabot branches were audited against the parent.
   None is incorporated or demonstrably superseded; preserve them. Findings
   are recorded on existing Kata `f0kv`.
