@@ -1,8 +1,8 @@
 //! Durable, exact-precondition transactions spanning several project files.
 //!
 //! A write-ahead journal is persisted before the first target is changed. On
-//! restart, recovery rolls the transaction forward only while every target
-//! still equals either its recorded before image or intended replacement.
+//! restart, recovery completes version-1 writes or rolls version-2 transfers
+//! back, only while every target still equals either recorded image.
 //! Divergent content is never overwritten and leaves the journal available for
 //! explicit resolution.
 
@@ -18,6 +18,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 const JOURNAL_VERSION: u32 = 1;
+// Version 2 is an uncommitted, rollback-on-recovery transaction. Older
+// executables reject it instead of accidentally rolling it forward.
+const ROLLBACK_JOURNAL_VERSION: u32 = 2;
 const JOURNAL_PREFIX: &str = ".konnect-transaction-";
 const JOURNAL_SUFFIX: &str = ".json";
 
@@ -70,12 +73,14 @@ pub struct TransactionCommit {
     pub files: usize,
 }
 
-/// Result of rolling one persisted transaction forward.
+/// Result of recovering one persisted transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecoveryOutcome {
     /// Stable transaction identifier.
     pub id: String,
-    /// Files that were still at their before image and were completed.
+    /// Whether recovery restored before images instead of completing writes.
+    pub rolled_back: bool,
+    /// Files restored or completed, according to `rolled_back`.
     pub completed_files: usize,
 }
 
@@ -106,6 +111,8 @@ pub struct TransactionStatus {
     pub id: String,
     /// Active journal path.
     pub journal: PathBuf,
+    /// Recovery restores before images for version-2 transfer transactions.
+    pub rolls_back: bool,
     /// Per-target states without journal contents.
     pub targets: Vec<TransactionTargetStatus>,
 }
@@ -306,11 +313,116 @@ pub fn commit_file_transaction(
     })
 }
 
+/// Replace existing files as one recoverable operation, rolling back on failure.
+///
+/// Unlike [`commit_file_transaction`], an interrupted operation is undone by
+/// recovery, never completed. All entries must replace existing files. Equal
+/// before/after images are read-set guards: locked and checked but not written.
+/// Existing pending journals are refused rather than recovered as a side effect.
+/// On rollback failure the journal is retained and the error names it; callers
+/// must report uncertain persistence and must not retry blindly. No filesystem
+/// can promise rollback in the face of lost storage or non-cooperating writes.
+pub fn commit_reversible_file_transaction(
+    journal_directory: impl AsRef<Path>,
+    transitions: Vec<FileTransition>,
+) -> Result<TransactionCommit, SexpError> {
+    commit_reversible_with(journal_directory.as_ref(), transitions, |_, _| Ok(()))
+}
+
+fn commit_reversible_with(
+    directory: &Path,
+    transitions: Vec<FileTransition>,
+    before_write: impl Fn(usize, &Path) -> Result<(), SexpError>,
+) -> Result<TransactionCommit, SexpError> {
+    let root = canonical_directory(directory)?;
+    if !active_journal_paths(&root)?.is_empty() {
+        return Err(SexpError::InvalidValue(
+            "Pending project transaction; inspect and recover it before transferring objects"
+                .into(),
+        ));
+    }
+    let entries = normalize_entries(&root, transitions, true)?;
+    if entries.iter().any(|entry| entry.expected.is_none()) {
+        return Err(SexpError::InvalidValue(
+            "Reversible transactions support existing files only".into(),
+        ));
+    }
+    let journal = Journal {
+        version: ROLLBACK_JOURNAL_VERSION,
+        id: uuid::Uuid::new_v4().to_string(),
+        entries,
+    };
+    let path = journal_path(&root, &journal.id);
+    let _locks = lock_entries(&root, &journal.entries)?;
+    ensure_entries_are_closed(&root, &journal.entries)?;
+    verify_before_images(&root, &path, &journal.entries)?;
+    persist_journal(&path, &journal)?;
+    let result = (|| {
+        for (index, entry) in journal.entries.iter().enumerate() {
+            if entry.expected.as_deref() != Some(entry.replacement.as_str()) {
+                before_write(index, &root.join(&entry.path))?;
+                apply_entry(&root, entry)?;
+            }
+        }
+        verify_after_images(&root, &path, &journal.entries)
+    })();
+    if let Err(error) = result {
+        if let Err(rollback) = rollback_entries(&root, &path, &journal.entries) {
+            return Err(transaction_conflict(
+                &path,
+                &root,
+                &format!("write failed: {error}; rollback uncertain: {rollback}"),
+            ));
+        }
+        remove_journal(&path)?;
+        return Err(error);
+    }
+    remove_journal(&path)?;
+    Ok(TransactionCommit {
+        id: journal.id,
+        files: journal
+            .entries
+            .iter()
+            .filter(|entry| entry.expected.as_deref() != Some(entry.replacement.as_str()))
+            .count(),
+    })
+}
+
+fn rollback_entries(
+    root: &Path,
+    journal: &Path,
+    entries: &[JournalEntry],
+) -> Result<usize, SexpError> {
+    // Check the entire set before restoring anything. Never overwrite an edit
+    // by KiCad or a third party, including a file not yet written by this job.
+    let mut applied = Vec::new();
+    for entry in entries {
+        let path = root.join(&entry.path);
+        let current = current_content(&path)?;
+        if current == entry.expected {
+            continue;
+        }
+        if current.as_deref() != Some(entry.replacement.as_str()) || entry.expected.is_none() {
+            return Err(transaction_conflict(
+                journal,
+                &path,
+                "cannot roll back divergent content",
+            ));
+        }
+        applied.push(entry);
+    }
+    for entry in applied.iter().rev() {
+        write_atomic_unlocked(&root.join(&entry.path), entry.expected.as_ref().unwrap())?;
+    }
+    verify_before_images(root, journal, entries)?;
+    Ok(applied.len())
+}
+
 /// Recover all project-local write-ahead journals in stable filename order.
 ///
-/// Recovery is idempotent. Files already at their replacement are left alone;
-/// files still at their before image are completed. Any other content is
-/// preserved and reported as a transaction conflict.
+/// Recovery is idempotent. Version-1 journals complete pending replacements;
+/// version-2 journals restore before images. Any divergent content is preserved
+/// and reported as a transaction conflict.
 ///
 /// # Errors
 ///
@@ -442,6 +554,15 @@ fn recover_journal(root: &Path, journal_path: &Path) -> Result<RecoveryOutcome, 
     let journal = read_validated_journal(root, journal_path)?;
     let _locks = lock_entries(root, &journal.entries)?;
     ensure_entries_are_closed(root, &journal.entries)?;
+    if journal.version == ROLLBACK_JOURNAL_VERSION {
+        let completed_files = rollback_entries(root, journal_path, &journal.entries)?;
+        remove_journal(journal_path)?;
+        return Ok(RecoveryOutcome {
+            id: journal.id,
+            rolled_back: true,
+            completed_files,
+        });
+    }
     let mut pending = Vec::new();
     for entry in &journal.entries {
         let path = root.join(&entry.path);
@@ -464,6 +585,7 @@ fn recover_journal(root: &Path, journal_path: &Path) -> Result<RecoveryOutcome, 
     remove_journal(journal_path)?;
     Ok(RecoveryOutcome {
         id: journal.id,
+        rolled_back: false,
         completed_files: pending.len(),
     })
 }
@@ -502,7 +624,7 @@ fn read_validated_journal(root: &Path, path: &Path) -> Result<Journal, SexpError
             path.display()
         )));
     }
-    if journal.version != JOURNAL_VERSION {
+    if !matches!(journal.version, JOURNAL_VERSION | ROLLBACK_JOURNAL_VERSION) {
         return Err(SexpError::InvalidValue(format!(
             "unsupported transaction journal version {} in {}",
             journal.version,
@@ -510,6 +632,13 @@ fn read_validated_journal(root: &Path, path: &Path) -> Result<Journal, SexpError
         )));
     }
     validate_journal_entries(root, &journal.entries)?;
+    if journal.version == ROLLBACK_JOURNAL_VERSION
+        && journal.entries.iter().any(|entry| entry.expected.is_none())
+    {
+        return Err(SexpError::InvalidValue(
+            "Rollback journal contains a create entry".into(),
+        ));
+    }
     Ok(journal)
 }
 
@@ -536,6 +665,7 @@ fn inspect_journal(
     Ok(TransactionStatus {
         id: journal.id.clone(),
         journal: path.to_path_buf(),
+        rolls_back: journal.version == ROLLBACK_JOURNAL_VERSION,
         targets,
     })
 }
@@ -543,6 +673,14 @@ fn inspect_journal(
 fn normalize_transitions(
     root: &Path,
     transitions: Vec<FileTransition>,
+) -> Result<Vec<JournalEntry>, SexpError> {
+    normalize_entries(root, transitions, false)
+}
+
+fn normalize_entries(
+    root: &Path,
+    transitions: Vec<FileTransition>,
+    allow_readset: bool,
 ) -> Result<Vec<JournalEntry>, SexpError> {
     if transitions.is_empty() {
         return Err(SexpError::InvalidValue(
@@ -559,7 +697,7 @@ fn normalize_transitions(
                 transition.path.display()
             )));
         }
-        if transition.expected.as_ref() == Some(&transition.replacement) {
+        if !allow_readset && transition.expected.as_ref() == Some(&transition.replacement) {
             return Err(SexpError::InvalidValue(format!(
                 "transaction target {} is unchanged",
                 transition.path.display()
@@ -781,6 +919,132 @@ mod tests {
     use super::*;
     use crate::schematic::{format_hierarchical_sheet, HierarchicalSheetSpec};
     use crate::{prepare_command, ItemAnchor, SchematicCommand};
+
+    #[test]
+    fn reversible_transaction_rolls_back_all_written_files_on_injected_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let a = directory.path().join("a.kicad_sch");
+        let b = directory.path().join("b.kicad_sch");
+        let pcb = directory.path().join("c.kicad_pcb");
+        for path in [&a, &b, &pcb] {
+            std::fs::write(path, "before").unwrap();
+        }
+        for failure_index in 0..3 {
+            let transitions = [&a, &b, &pcb]
+                .into_iter()
+                .map(|path| FileTransition::replace(path, "before", "after"))
+                .collect();
+            let error = commit_reversible_with(directory.path(), transitions, |index, _| {
+                if index == failure_index {
+                    return Err(SexpError::InvalidValue("injected write failure".into()));
+                }
+                Ok(())
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("injected"));
+            for path in [&a, &b, &pcb] {
+                assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
+            }
+            assert!(inspect_file_transactions(directory.path())
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn reversible_transaction_commits_and_readset_conflicts_leave_everything_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.kicad_sch");
+        let guard = dir.path().join("root.kicad_sch");
+        std::fs::write(&a, "before").unwrap();
+        std::fs::write(&guard, "stale").unwrap();
+        assert!(commit_reversible_file_transaction(
+            dir.path(),
+            vec![
+                FileTransition::replace(&a, "before", "after"),
+                FileTransition::replace(&guard, "original", "original")
+            ]
+        )
+        .is_err());
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "before");
+        assert!(inspect_file_transactions(dir.path()).unwrap().is_empty());
+        let commit = commit_reversible_file_transaction(
+            dir.path(),
+            vec![
+                FileTransition::replace(&a, "before", "after"),
+                FileTransition::replace(&guard, "stale", "stale"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(commit.files, 1);
+        assert_eq!(std::fs::read_to_string(a).unwrap(), "after");
+        assert_eq!(std::fs::read_to_string(guard).unwrap(), "stale");
+    }
+
+    #[test]
+    fn reversible_journal_recovers_by_restoring_before_images_not_completing_move() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.kicad_sch");
+        let b = dir.path().join("b.kicad_sch");
+        std::fs::write(&a, "after").unwrap();
+        std::fs::write(&b, "before").unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let journal = Journal {
+            version: ROLLBACK_JOURNAL_VERSION,
+            id: id.clone(),
+            entries: vec![
+                JournalEntry {
+                    path: PathBuf::from("a.kicad_sch"),
+                    expected: Some("before".into()),
+                    replacement: "after".into(),
+                },
+                JournalEntry {
+                    path: PathBuf::from("b.kicad_sch"),
+                    expected: Some("before".into()),
+                    replacement: "after".into(),
+                },
+            ],
+        };
+        persist_journal(&journal_path(dir.path(), &id), &journal).unwrap();
+        assert!(inspect_file_transactions(dir.path()).unwrap()[0].rolls_back);
+        let outcomes = recover_file_transactions(dir.path()).unwrap();
+        assert!(outcomes[0].rolled_back);
+        assert_eq!(outcomes[0].completed_files, 1);
+        for path in [&a, &b] {
+            assert_eq!(std::fs::read_to_string(path).unwrap(), "before");
+        }
+        assert!(inspect_file_transactions(dir.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn reversible_rollback_never_overwrites_divergent_content_and_retains_recovery_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.kicad_sch");
+        let b = dir.path().join("b.kicad_sch");
+        std::fs::write(&a, "before").unwrap();
+        std::fs::write(&b, "before").unwrap();
+        let result = commit_reversible_with(
+            dir.path(),
+            vec![
+                FileTransition::replace(&a, "before", "after"),
+                FileTransition::replace(&b, "before", "after"),
+            ],
+            |index, _| {
+                if index == 1 {
+                    std::fs::write(&a, "external edit")?;
+                    return Err(SexpError::InvalidValue("injected failure".into()));
+                }
+                Ok(())
+            },
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("rollback uncertain"));
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "external edit");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "before");
+        assert_eq!(inspect_file_transactions(dir.path()).unwrap().len(), 1);
+    }
 
     #[test]
     fn transaction_replaces_and_creates_files_together() {

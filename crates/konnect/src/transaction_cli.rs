@@ -34,6 +34,14 @@ fn status(project: &Path) -> Result<()> {
 
     for status in statuses {
         println!("Transaction {} ({})", status.id, status.journal.display());
+        println!(
+            "  Recovery will {}.",
+            if status.rolls_back {
+                "restore before images"
+            } else {
+                "complete pending writes"
+            }
+        );
         for target in status.targets {
             let state = match target.state {
                 TransactionTargetState::Pending => "pending",
@@ -55,8 +63,14 @@ fn recover(project: &Path) -> Result<()> {
     } else {
         for outcome in outcomes {
             println!(
-                "Recovered transaction {} (completed {} file(s)).",
-                outcome.id, outcome.completed_files
+                "Recovered transaction {} ({} {} file(s)).",
+                outcome.id,
+                if outcome.rolled_back {
+                    "restored"
+                } else {
+                    "completed"
+                },
+                outcome.completed_files
             );
         }
     }
