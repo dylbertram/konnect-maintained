@@ -63,6 +63,14 @@ Boat workers or run tests locally. Load `byskap-builds`; measure host/target
 headroom, keep the 500 MB reserve, and use one coordinator-owned job at a time
 unless capacity is explicitly reconciled. Other sessions' jobs are not ours.
 
+The user permits more than two Boat instances. The observed two-job cap is
+the current BySkap executor configuration, not an established Boat account
+concurrency limit. Use additional workers when the supported executor exposes
+them, preserving cleanup controls and daily/hourly/minute start reserves.
+Check live limits before provisioning; 200 starts per day is not a concurrency
+limit. The shell Boat CLI currently needs authentication, so do not obtain or
+copy the executor's private Boat key to work around that boundary.
+
 Use native KiCad-written fixtures where behavior depends on serialization.
 Require deterministic failing-before/passing-after evidence, served dispatch,
 committed readback, no-write refusals and appropriate negative controls.
