@@ -81,7 +81,9 @@ no-connect flags, text and text boxes. The operation refuses:
 - Buses or legacy top-level symbol-instance tables on either affected sheet,
   derived library definitions, conflicting destination definitions, incomplete or
   cyclic hierarchies and sheets outside the project directory.
-- Pending project transactions or live/uncertain PCB editor state.
+- Pending project transactions, a present/uninspectable KiCad project lock, or
+  live/uncertain PCB editor state. Project locks are checked again after native
+  verification and before applying changes.
 
 Required library definitions are copied unchanged only when absent; matching
 definitions are reused. Source definitions are not deleted. Global labels and

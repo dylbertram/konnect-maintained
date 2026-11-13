@@ -132,6 +132,12 @@ async fn transfer(args: &Value, ctx: &ToolContext) -> Result<CallToolResult> {
         Ok(plan) => plan,
         Err(error) => return Ok(blocked(format!("{error:#}"))),
     };
+    if let Some(error) = super::pcb_board::refuse_if_project_locked_by_kicad(
+        &plan.root.with_extension("kicad_pro"),
+        "cross-sheet transfer",
+    ) {
+        return Ok(error);
+    }
     if let Some(board) = &plan.board {
         if let Some(error) = closed_board(ctx, board).await? {
             return Ok(error);
@@ -158,6 +164,12 @@ async fn transfer(args: &Value, ctx: &ToolContext) -> Result<CallToolResult> {
         return Ok(CallToolResult::json(&plan.report));
     }
     // A long CLI verification must not leave the board-open observation stale.
+    if let Some(error) = super::pcb_board::refuse_if_project_locked_by_kicad(
+        &plan.root.with_extension("kicad_pro"),
+        "cross-sheet transfer",
+    ) {
+        return Ok(error);
+    }
     if let Some(board) = &plan.board {
         if let Some(error) = closed_board(ctx, board).await? {
             return Ok(error);
@@ -1895,6 +1907,50 @@ mod tests {
                         .unwrap();
                 assert_eq!(destination.symbols.iter().next().unwrap().uuid, RESISTOR);
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn transfer_project_lock_refuses_dry_run_and_apply_before_cli_or_writes() {
+        let (dir, request) = fixture();
+        let lock = konnect_sexp::writer::kicad_project_lock_path(
+            &request.schematic.with_extension("kicad_pro"),
+        )
+        .unwrap();
+        std::fs::write(lock, "test-owned project lock").unwrap();
+        let before = snapshot(dir.path());
+        let handler = crate::mcp::handler::McpHandler::new(super::super::ServerConfig {
+            kicad_cli: String::new(),
+            ipc_address: String::new(),
+            eager_toolsets: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        for dry_run in [true, false] {
+            let response = handler
+                .handle_message(json!({
+                    "jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+                        "name":"move_schematic_objects_between_sheets","arguments":{
+                            "schematic":request.schematic,
+                            "source_sheet_instance":request.source_sheet_instance,
+                            "destination_sheet_instance":request.destination_sheet_instance,
+                            "object_uuids":request.object_uuids,
+                            "offset_x_mm":request.offset_x_mm,"offset_y_mm":request.offset_y_mm,
+                            "dry_run":dry_run
+                        }
+                    }
+                }))
+                .await
+                .unwrap()
+                .result
+                .unwrap();
+            assert_eq!(response["isError"], true, "{response}");
+            let body: Value =
+                serde_json::from_str(response["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(body["error"]["kind"], "unsafe_file_fallback");
+            assert_eq!(body["error"]["reason"], "kicad_project_lock_present");
+            assert_eq!(before, snapshot(dir.path()));
         }
     }
 
