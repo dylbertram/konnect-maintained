@@ -22,7 +22,10 @@ fn round_trip(source: &str) -> String {
 
 #[test]
 fn native_text_blocks_round_trip_exactly() {
-    assert!(!fixture::NATIVE.contains('\r'), "native LF capture required");
+    assert!(
+        !fixture::NATIVE.contains('\r'),
+        "native LF capture required"
+    );
     fixture::assert_state(fixture::NATIVE, Some(false));
     let written = round_trip(fixture::NATIVE);
     fixture::assert_exact_blocks(fixture::NATIVE, &written);

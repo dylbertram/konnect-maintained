@@ -122,7 +122,10 @@ async fn native(
     if !cfg!(target_os = "linux") {
         panic!("native gate requires Linux");
     }
-    assert!(Path::new(cli).is_absolute(), "select an explicit native CLI");
+    assert!(
+        Path::new(cli).is_absolute(),
+        "select an explicit native CLI"
+    );
     let wrapper = directory.join(format!("text-native-{phase}.py"));
     std::fs::write(&wrapper, include_str!("support/pcb_export_supervisor.py")).unwrap();
     std::fs::write(
@@ -144,8 +147,16 @@ async fn native(
         .output()
         .await
         .unwrap();
-    std::fs::write(directory.join(format!("{phase}.stdout.log")), &output.stdout).unwrap();
-    std::fs::write(directory.join(format!("{phase}.stderr.log")), &output.stderr).unwrap();
+    std::fs::write(
+        directory.join(format!("{phase}.stdout.log")),
+        &output.stdout,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join(format!("{phase}.stderr.log")),
+        &output.stderr,
+    )
+    .unwrap();
     let audits: Vec<_> = std::fs::read_dir(wrapper.with_extension("audit"))
         .unwrap()
         .map(|entry| entry.unwrap().path().join("finished.json"))
@@ -195,9 +206,13 @@ fn pin_partitions(path: &Path) -> BTreeSet<BTreeSet<(String, String)>> {
 async fn native_resave_then_served_add_wire_keeps_text_and_connectivity() {
     let cli = std::env::var("KONNECT_TEST_KICAD_CLI").expect("explicit native CLI required");
     let artifacts = PathBuf::from(
-        std::env::var_os("KONNECT_TEST_NATIVE_ARTIFACT_DIR").expect("native gate must retain artifacts"),
+        std::env::var_os("KONNECT_TEST_NATIVE_ARTIFACT_DIR")
+            .expect("native gate must retain artifacts"),
     );
-    assert!(artifacts.is_absolute(), "use an absolute artifact directory");
+    assert!(
+        artifacts.is_absolute(),
+        "use an absolute artifact directory"
+    );
     std::fs::create_dir_all(&artifacts).unwrap();
     assert!(
         std::fs::read_dir(&artifacts).unwrap().next().is_none(),
@@ -207,8 +222,7 @@ async fn native_resave_then_served_add_wire_keeps_text_and_connectivity() {
     let path_string = path.to_str().unwrap();
     // Keep the supervisor and audits outside TempDir, so dropping this future
     // cannot delete the cleanup owner's config or its eventual finished audit.
-    let (version, version_audit) =
-        native(&artifacts, "version", &cli, 10, &["--version"]).await;
+    let (version, version_audit) = native(&artifacts, "version", &cli, 10, &["--version"]).await;
     let version = String::from_utf8(version.stdout).unwrap();
     assert!(!version.trim().is_empty());
     let (_, upgrade_audit) = native(

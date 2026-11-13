@@ -152,6 +152,27 @@ control per admitted command if the complete matrix would exceed its budget.
 
 ## Execution status and proposed gates
 
+The coordinator approved source review of `18bd317`. Its remote stage-one
+command `cmd_ulo0emrptt2j` stopped at `cargo fmt --all -- --check` before tests.
+The complete formatting diff is retained in the parent worktree at
+`.remote-build-jobs/boat-text-verification/stage1-full.log`.
+Only those reported formatting changes were applied here through patches;
+no local formatter or toolchain was executed.
+
+The three affected source pins in the control runner were refreshed. Reviewed
+post-correction SHA-256 values:
+
+- `crates/konnect-core/tests/text_preservation.rs`:
+  `799012f14977b62e4ac8a490c43f713e488b791473b2a18ef8b1f7834e767ec6`
+- `crates/konnect-schematic-editor/tests/support/text_preservation.rs`:
+  `57ae35105cacaa772d828986bce33f7946aab0877b7733ef1b7eff33aa95d065`
+- `crates/konnect-schematic-editor/tests/text_round_trip.rs`:
+  `a8e9e744c4accb3d2c3dd2b6526a32dbe196c2cb465b4e64d86f222101ebdce2`
+
+Production `misc.rs`, the baseline section, native fixture and its provenance
+are unchanged. Formatting-only rejection is not a failed regression test or
+evidence of successful compilation. The coordinator still owns the rerun.
+
 No positive, failing-before, mutation or ignored native test has run in this
 child. No formatting or Clippy result is claimed. Coordinator commands after
 capacity admission and dependency preparation:

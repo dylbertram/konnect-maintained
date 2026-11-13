@@ -27,15 +27,15 @@ HASHES = {
     MISC: "8589889ecd32827384ab9737f6ccd1a2c4222621999ff1eea7e432e09a6be92e",
     BEFORE: "6f6917c3543d29fbc846bf9f0ef35105eb0cf10f72451f9a11341ffc472824f6",
     Path("crates/konnect-schematic-editor/tests/text_round_trip.rs"):
-        "4aad19fc8137b0af3a948567100c69c6f313f8647508a07fc74246771dcb2d16",
+        "a8e9e744c4accb3d2c3dd2b6526a32dbe196c2cb465b4e64d86f222101ebdce2",
     Path("crates/konnect-schematic-editor/tests/support/text_preservation.rs"):
-        "d3487448a894ff300802a6a3f6d8b8883b08510d8d5b1ce99f5d6cbafa9c6fad",
+        "57ae35105cacaa772d828986bce33f7946aab0877b7733ef1b7eff33aa95d065",
     Path("crates/konnect-schematic-editor/tests/fixtures/text_preservation_kicad10.kicad_sch"):
         "1bbd268c32a780f2314fb0a280405be92800086ff2ac1a5cf50b15f5ca266398",
     Path("crates/konnect-schematic-editor/tests/fixtures/text_preservation_kicad10.provenance.json"):
         "84ca2f14ff5d64a80930a2c2b60e0d7c61dc9481c5530967c4b3e4cc3a4d8fa0",
     Path("crates/konnect-core/tests/text_preservation.rs"):
-        "622db83ed30437d2a042e31b79738c469df7174f8857d0d56b8a15e36c46d985",
+        "799012f14977b62e4ac8a490c43f713e488b791473b2a18ef8b1f7834e767ec6",
     Path("crates/konnect-core/tests/support/pcb_export_supervisor.py"):
         "95108143509ca77a8b3e112ebe6e9386daf33e21712c67afa3213bd57fa0a665",
 }

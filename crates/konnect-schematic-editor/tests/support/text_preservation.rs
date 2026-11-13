@@ -16,9 +16,7 @@ pub fn ranges(source: &str) -> Vec<(usize, usize)> {
     assert_eq!(root.head(), Some("kicad_sch"));
     let ranges: Vec<_> = find_direct_child_blocks(source, "kicad_sch")
         .into_iter()
-        .filter(|&(start, end)| {
-            parse_sexp(&source[start..end]).unwrap().head() == Some("text")
-        })
+        .filter(|&(start, end)| parse_sexp(&source[start..end]).unwrap().head() == Some("text"))
         .collect();
     assert_eq!(ranges.len(), root.find_all("text").len());
     assert_eq!(ranges.len(), UUIDS.len(), "fixture must contain both texts");
@@ -33,7 +31,10 @@ pub fn blocks(source: &str) -> BTreeMap<String, &str> {
         let block = &source[start..end];
         let node = parse_sexp(block).unwrap();
         let uuid = node.find_str("uuid").unwrap().to_owned();
-        assert!(UUIDS.contains(&uuid.as_str()), "unexpected text UUID {uuid}");
+        assert!(
+            UUIDS.contains(&uuid.as_str()),
+            "unexpected text UUID {uuid}"
+        );
         assert!(out.insert(uuid, block).is_none(), "duplicate text UUID");
     }
     assert_eq!(out.len(), UUIDS.len());
@@ -90,7 +91,10 @@ pub fn assert_state(source: &str, state: Option<bool>) {
                 .iter()
                 .position(|n| n.head() == Some("exclude_from_sim"))
                 .unwrap();
-            let at = children.iter().position(|n| n.head() == Some("at")).unwrap();
+            let at = children
+                .iter()
+                .position(|n| n.head() == Some("at"))
+                .unwrap();
             assert!(exclusion < at, "{uuid}: exclusion must precede at");
         }
     }
