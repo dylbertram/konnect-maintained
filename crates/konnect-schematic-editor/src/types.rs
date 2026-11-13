@@ -73,7 +73,9 @@ impl At {
 pub struct Property {
     pub name: String,
     pub value: String,
-    /// Trailing sub-nodes after name+value (at, effects, show_pin_number, …).
+    /// KiCad's bare `private` flag before the name, not a field named "private".
+    pub private: bool,
+    /// Trailing children after name+value, in source order (at, effects, …).
     pub sub_nodes: Vec<SexpNode>,
 }
 
@@ -82,33 +84,33 @@ impl Property {
         Property {
             name: name.into(),
             value: value.into(),
+            private: false,
             sub_nodes: vec![],
         }
     }
 
     pub fn from_sexp(node: &SexpNode) -> Option<Self> {
         let args = node.args();
-        let name = args.first()?.text()?.to_owned();
-        let value = args.get(1)?.text()?.to_owned();
-        let sub_nodes = args
-            .iter()
-            .skip(2)
-            .filter(|n| n.is_list())
-            .cloned()
-            .collect();
+        let private = matches!(args.first(), Some(SexpNode::Atom(flag)) if flag == "private");
+        let offset = usize::from(private);
+        let name = args.get(offset)?.text()?.to_owned();
+        let value = args.get(offset + 1)?.text()?.to_owned();
+        let sub_nodes = args[offset + 2..].to_vec();
         Some(Property {
             name,
             value,
+            private,
             sub_nodes,
         })
     }
 
     pub fn to_sexp(&self) -> SexpNode {
-        let mut children = vec![
-            atom("property"),
-            qstr(self.name.clone()),
-            qstr(self.value.clone()),
-        ];
+        let mut children = vec![atom("property")];
+        if self.private {
+            children.push(atom("private"));
+        }
+        children.push(qstr(self.name.clone()));
+        children.push(qstr(self.value.clone()));
         children.extend(self.sub_nodes.iter().cloned());
         SexpNode::List(children)
     }

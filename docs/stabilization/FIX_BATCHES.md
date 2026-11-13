@@ -8,9 +8,11 @@ appears once in the packet lists below. Paired issue/PR records count separately
 Coverage was checked against a second complete live inventory: all 261 references
 matched, with no missing, extra or duplicate assignments.
 
-This is a work plan, not implementation acceptance. Existing claims stay with
-their owners. No new Kata tickets, assignments, status changes or closures were
-made. Do not open follow-on tickets for findings that cannot be verified.
+This inventory is a planning snapshot, not implementation acceptance or a live
+open-ticket count. At inventory time, no Kata writes were made. Subsequent
+implementation, verification, closures and authorized cleanup-parent merges
+are recorded in `CLEANUP_PLAN.md`; retain the original packet membership here.
+Do not open follow-on tickets for findings that cannot be verified.
 
 The imported catalog and `REVIEW_NOTES.md` record historical screening, not
 current readiness. This pass inventoried the open tickets, inspected critical
