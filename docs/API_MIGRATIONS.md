@@ -3,6 +3,26 @@
 Konnect's tool schemas are public API. This file records intentional argument
 removals and the supported replacement workflow.
 
+## Unreleased: PCB netlist dispatch and front-view plots
+
+`export_netlist` now sends `format: "ipc"` and `"ipcd356"` with an explicit
+`.kicad_pcb` path to `kicad-cli pcb export ipcd356`. Unknown formats and
+non-string format values are refused before CLI execution.
+
+The existing `"kicad"` default remains, but a PCB path is refused with guidance
+to use `generate_netlist` with an explicit `.kicad_sch` path. Konnect never guesses
+a sibling schematic. Explicit schematic input to `export_netlist` still supports
+`"kicad"` through `sch export netlist`. These CLI exports read saved files, not
+unsaved editor state.
+
+`export_pdf` and `export_svg` now interpret omitted or empty `layers` as the front
+view, drawing `F.Cu`, `F.Mask`, `F.SilkS`, `Edge.Cuts` in that order, limited to
+layers declared by the saved board. The old "all visible layers" default was
+not supported by KiCad's CLI. A board declaring none of these layers is refused.
+Explicit lists retain their order. Both responses add `layers`. Non-array
+values, including `null`, and non-string entries are refused as `invalid_argument`
+instead of being silently discarded. Outputs remain single-file plots.
+
 ## Unreleased: native schematic DNP
 
 `edit_schematic_component` and each entry in `batch_edit_schematic_components`
