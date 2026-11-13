@@ -2,7 +2,8 @@
 """Coordinator-only Linux/KiCad 10.0.8 rename acceptance, source only until run.
 
 Use the UNCHANGED pcb_export_supervisor.py with a 60-second child budget and
-Xvfb. No installs, Git, shared editors, authored CAD or native save/upgrade.
+Xvfb. No installs, Git, shared editors, authored CAD or CAD save/upgrade.
+Native CLI-generated preferences are retained, never fabricated or removed.
 Schematic and PCB fixtures are independent: no sch/PCB parity claim is made.
 """
 import argparse
@@ -182,12 +183,58 @@ def canonical_netlist(path):
 
 
 def export_netlist(cli, project, schematic, environment, out, label):
-    # Export only retained read copies, not a live editor's project.
+    # Export retained copies, never the actual positive project. The native
+    # CLI can create root preferences without saving/upgrading any CAD.
+    require(schematic.parent == project, "netlist input is not this retained copy's root schematic")
     before = tree_manifest(project)
+    write_json(out / f"{label}.readcopy-before.manifest.json", before)
     output = out / f"{label}.xml"
-    cli_run([cli, "sch", "export", "netlist", "--format", "kicadxml",
-             "--output", str(output), str(schematic)], environment, out, label)
-    require(tree_manifest(project) == before, f"CLI changed its input read copy: {label}")
+    try:
+        cli_run([cli, "sch", "export", "netlist", "--format", "kicadxml",
+                 "--output", str(output), str(schematic)], environment, out, label)
+    finally:
+        after = tree_manifest(project)
+        write_json(out / f"{label}.readcopy-after.manifest.json", after)
+    require(all(name in after and after[name] == entry for name, entry in before.items()),
+            f"CLI modified or deleted an original read-copy entry: {label}")
+    preferences_path = schematic.with_suffix(".kicad_prl")
+    added = set(after) - set(before)
+    require(added in (set(), {preferences_path.name}),
+            f"CLI added entries other than this root's preferences: {label}: {sorted(added)}")
+    generated = None
+    if added:
+        metadata = preferences_path.lstat()
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1
+                and 0 < metadata.st_size <= 64 * 1024,
+                f"native CLI preferences are not a bounded normal regular file: {label}")
+        raw = preferences_path.read_bytes()
+        require(len(raw) == metadata.st_size
+                and sha(raw) == after[preferences_path.name]["sha256"],
+                f"native CLI preferences changed after their manifest was captured: {label}")
+
+        def reject_constant(value):
+            raise ValueError(f"non-JSON constant in native CLI preferences: {value}")
+
+        preferences = json.loads(raw, parse_constant=reject_constant)
+        require(isinstance(preferences, dict), f"native CLI preferences are not a JSON object: {label}")
+        artifact = out / f"{label}.native-cli-generated.kicad_prl"
+        shutil.copyfile(preferences_path, artifact)
+        require(artifact.read_bytes() == raw and preferences_path.read_bytes() == raw,
+                f"native CLI preference bytes were not retained exactly: {label}")
+        generated = {
+            "origin": "actual native kicad-cli sch export netlist",
+            "path": str(preferences_path), "artifact": str(artifact),
+            "bytes": len(raw), "sha256": sha(raw), "mode_octal": oct(stat.S_IMODE(metadata.st_mode)),
+            "regular_file": True, "link_count": metadata.st_nlink,
+            "json_object": True, "json_top_level_keys": sorted(preferences),
+        }
+    write_json(out / f"{label}.native-cli-preferences.json", {
+        "original_entries_unchanged": True,
+        "only_permitted_addition": preferences_path.name,
+        "actual_additions": sorted(added), "generated_prl": generated,
+        "before_manifest": f"{label}.readcopy-before.manifest.json",
+        "after_manifest": f"{label}.readcopy-after.manifest.json",
+    })
     canonical = canonical_netlist(output)
     write_json(out / f"{label}.canonical.json", canonical)
     return canonical

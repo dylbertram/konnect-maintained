@@ -271,7 +271,20 @@ substitution, and **no PCB byte changes**. Neither production transformer nor
 CAD text authoring supplies the expected outputs.
 
 Actual `kicad-cli sch export netlist --format kicadxml` runs on retained read
-copies before and after rename. Exported XML is retained and compared by
+copies before and after rename, not on the actual four-file positive project.
+Native execution showed that CLI export can add the root's `.kicad_prl`
+preferences without changing any original data file. The helper therefore
+retains separate pre/post export manifests and permits no addition except that
+one exact root-stem filename. Every original file and directory entry must
+remain identical; deletion, modification, a new directory, another filename or
+a changed pre-existing PRL fails. An added PRL must be a nonsymlink regular
+file with one link, at most 64 KiB, and a valid JSON object. Its native bytes
+remain in the read copy and are also copied unchanged into an explicitly named
+artifact with size/hash/mode/JSON metadata. No PRL is fabricated, removed or
+normalized. A CLI run with no additions still requires all original entries
+unchanged. This is not a claim that the whole CLI input copy remains read-only.
+
+Exported XML is retained and compared by
 component references/UUIDs/library/value/footprint/sheet UUIDs and named
 pin-net membership, excluding only export ordering, net codes, generator dates
 and design source filenames. pcbnew loads the saved before/after PCB and checks
@@ -322,6 +335,8 @@ or acceptance will finish within them.
 
 Retain `native-project-rename.json`, `native-lifecycle.json`, served response
 JSON/logs, before/after/final CAD copies and their hash manifests, native XML and canonical JSON,
+each `netlist-*.readcopy-*.manifest.json`, `netlist-*.native-cli-preferences.json`
+and any `netlist-*.native-cli-generated.kicad_prl`,
 saved-PCB identity JSON, CLI audits/stdout/stderr, optional proxy raw files and
 the supervisor's `started.json`/`finished.json`. A pass requires unchanged
 source/fixture hashes, successful lifecycle audits and verified absence of the
