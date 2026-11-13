@@ -499,12 +499,16 @@ Claude Desktop.
 For clients that cache the initial list but do not also cap the number of
 callable tools, the fix is to make the *first* listing complete:
 
+Set `eager_toolsets = true` in `konnect.toml`, or add the following key to the
+existing `settings.json`:
+
 ```json
 { "eager_toolsets": true }
 ```
 
-in `konnect.toml` in the working directory, or a `settings.json` beside the binary. Every toolset is then loaded at
-startup, so `tools/list` carries all 239 tools from the first call.
+These are Konnect server settings, not the MCP client's settings. Keep the
+file's other settings when editing it. Every toolset is then loaded at startup,
+so the first `tools/list` carries the full catalog.
 
 It is off by default because it costs what the router exists to save: roughly
 25K tokens per listing instead of ~2K. Turn it on only if your client needs it.
@@ -512,6 +516,35 @@ It is off by default because it costs what the router exists to save: roughly
 Note that `auto_load_toolsets` does **not** solve this. It loads a toolset when
 a tool from it is *called*, which helps only a client that already knows the
 tool name — so it does nothing for a client whose tool list is stale.
+
+## Muse loads toolsets but still reports "unknown tool"
+
+Muse over MCP stdio was reported to cache the initial `tools/list` and ignore
+`notifications/tools/list_changed` in
+[#922](https://github.com/mixelpixx/Konnect/issues/922). With Konnect v0.11.0 on
+Windows and KiCad 10.0, `load_toolset` succeeded but tools outside the starter
+kit stayed uncallable. The reporter verified that `eager_toolsets` fixed this.
+This is client-report evidence, not a guarantee about every Muse version.
+
+Enable `eager_toolsets` using the server setting above. A `settings.json`
+beside the Konnect binary worked in that report when the profile config did
+not. It is not an unconditional override: `--config <path>` selects an explicit
+file; otherwise working-directory `konnect.toml` and `settings.json` take
+precedence over executable-relative files, which precede the profile config.
+Only the first existing file is loaded, without merging. Call
+`get_installation_info` and inspect `configuration.selected_path` and
+`configuration.skipped_existing_paths` to find the effective file.
+See [configuration-file selection](KICAD_INTEGRATION.md).
+
+Start a new Muse session after changing the setting so a fresh server reads it
+and Muse receives the full catalog in its first listing. The reporter found
+that killing the server mid-session did not make Muse respawn it. Verify the
+new session's first `tools/list` and a previously unavailable tool before
+editing a design. `auto_load_toolsets` cannot fix a cached tool list.
+
+Unlike the Copilot report below, no client-side tool cap was observed in this
+Muse report. If your version imposes a cap, advertising the full catalog may
+not be enough.
 
 ## VS Code Copilot says a tool is "currently disabled by the user"
 
