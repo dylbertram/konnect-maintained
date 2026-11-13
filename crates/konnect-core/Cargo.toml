@@ -34,8 +34,12 @@ usvg.workspace = true
 zip.workspace = true
 tempfile = "3"
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "=1.1.4", features = ["fs"] }
+
 [target.'cfg(windows)'.dependencies]
 winreg.workspace = true
+windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 # The pcb_components fallback tests spawn a mock KiCAD NNG endpoint to prove

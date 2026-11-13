@@ -3,6 +3,36 @@
 Konnect's tool schemas are public API. This file records intentional argument
 removals and the supported replacement workflow.
 
+## Unreleased: project rename guards snapshots and reports partial work
+
+`rename_project` keeps its existing arguments and defaults, including `dry_run`
+and `rename_directory`. Its reference transformations are unchanged. Apply now
+prepares all source snapshots before moving files, refuses pending transaction
+journals without recovering them, checks old-name KiCad project/design ownership
+and live-board authority, and compares the complete original snapshot inside the
+shared atomic writer's lock before replacing each file.
+
+Filename, backup-folder and optional directory moves claim destinations with
+native no-replace operations. Windows, macOS and Linux retain implementations.
+There is no replacing-rename or copy/delete fallback. Unsupported filesystem
+operations can still fail after earlier steps have succeeded.
+
+Apply responses add `outcome` and `applied`. A refusal before any applied work is
+`failed`. A later conflict is `partial`, with actual completed filename moves,
+verified rewrites and their resulting paths. No rollback is attempted. Backup
+and directory collisions are reported, not silently skipped or claimed as moves.
+Post-attempt errors or failed committed/final-path readback return
+`mutation_outcome_uncertain` and `outcome.status = "uncertain"`, with known work
+and any unverified move attempt. Do not blindly repeat partial or uncertain
+requests. Inspect and reconcile the reported paths first.
+
+Dry-run retains its existing read-only preview shape, including zero-hit files.
+It is not a promise that ownership or filesystem checks will permit apply.
+The operation is not an all-or-nothing transaction or a same-file request queue.
+See `docs/stabilization/PROJECT_RENAME_SAFETY.md` for limits, fixture provenance
+and the coordinator-owned validation gates, including pending macOS/Windows
+runtime qualification.
+
 ## Unreleased: placed schematic symbols preserve optional attribute syntax
 
 `konnect_schematic_editor::Symbol` keeps every existing public field and type.
