@@ -326,11 +326,11 @@ and Windows servers do not.
 | Tool | Description |
 |------|-------------|
 | `export_gerber` | Export Gerber production files for all copper/mask layers using kicad-cli. |
-| `export_pdf` | Export selected PCB layers to one PDF file using kicad-cli, optionally in black and white. |
-| `export_svg` | Export selected PCB layers to one SVG file using kicad-cli, optionally in black and white. |
+| `export_pdf` | Export selected saved PCB layers to one PDF, optionally in black and white. Omitted or empty `layers` selects F.Cu, F.Mask, F.SilkS, Edge.Cuts in drawing order, limited to declared layers. |
+| `export_svg` | Export selected saved PCB layers to one SVG, optionally in black and white. Omitted or empty `layers` selects F.Cu, F.Mask, F.SilkS, Edge.Cuts in drawing order, limited to declared layers. |
 | `export_3d` | Export the PCB as a 3D model using kicad-cli, with explicit control over unspecified footprint models. |
 | `export_bom` | Generate KiCad 10's CSV Bill of Materials from schematic fields. |
-| `export_netlist` | Export the PCB netlist in KiCAD or IPC-D-356 format. |
+| `export_netlist` | Export a saved PCB's IPC-D-356 netlist with `format: "ipc"` or `"ipcd356"`. KiCad format requires an explicit schematic path, preferably via `generate_netlist`; no sibling is inferred. |
 | `export_specctra_dsn` | Export a deterministic, revision-bound Specctra DSN plus reverse manifest from a supported live KiCad board. The Rust exporter is the default. On KiCad 10, explicitly set `native_bridge_mode` to `prefer` or `require` for the optional authenticated ActionPlugin native exporter. Preserves locked straight tracks and through vias as fixed wiring; refuses unlocked routing, arcs, unsupported geometry, or incomplete rules. |
 | `export_position_file` | Generate a component placement (pick-and-place) position file for SMT assembly. |
 | `export_dxf` | Export the PCB to DXF, one file per requested layer, using kicad-cli. `layers` is required — there is no all-layers default. For mechanical CAD interchange. |
