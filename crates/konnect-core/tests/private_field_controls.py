@@ -1,7 +1,8 @@
 """Coordinator-only controls for a disposable, capacity-admitted Linux worker.
 
-Pins the reviewed source and test bytes from 90b9bc4. Never run in a live
-checkout or alongside another writer. No Git, native KiCad or network calls.
+Pins production from 90b9bc4, the bounded native-test follow-up and the export
+supervisor imported from 410675b. Never run in a live checkout or alongside
+another writer. No Git, native KiCad or network calls.
 """
 
 import argparse
@@ -25,7 +26,9 @@ HASHES = {
     Path("crates/konnect-schematic-editor/tests/private_properties.rs"):
         "5e569e9171c5700092fa09b6864fd7c99e77b60f4bb375f55309d9bd041274ec",
     Path("crates/konnect-core/src/tools/sch_private_fields_tests.rs"):
-        "7ef5ee8a7f26da89cfb2d1f98806f3f978b0409260d10ed84ae0e5edfd7bd222",
+        "2063bb661c494b1aed65ba5d49259daa5ede112a08d6774d35d63d4aa90cdcb5",
+    Path("crates/konnect-core/tests/support/pcb_export_supervisor.py"):
+        "95108143509ca77a8b3e112ebe6e9386daf33e21712c67afa3213bd57fa0a665",
     Path("crates/konnect-core/tests/fixtures/private_fields.rs"):
         "930adb1b261babfe9b4db47d9ebe10ad12bf830ad58de5ca1d51178799cf620a",
     Path("crates/konnect-core/tests/fixtures/component_fields_kicad10.kicad_sch"):
@@ -280,7 +283,7 @@ def main():
     for path, digest in HASHES.items():
         source = (ROOT / path).read_bytes()
         if hashlib.sha256(source).hexdigest() != digest:
-            raise RuntimeError(f"reviewed 90b9bc4 source precondition changed: {path}")
+            raise RuntimeError(f"pinned private-fields source precondition changed: {path}")
         originals[path] = source
     names = list(CONTROLS) if args.control == "all" else [args.control]
     # Validate every requested source replacement before starting any command.

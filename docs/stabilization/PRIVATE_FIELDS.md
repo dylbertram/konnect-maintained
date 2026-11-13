@@ -4,6 +4,8 @@ Bounded child of `cleanup/main` at `b1c0b3c`, on
 `cleanup/fix/private-fields`. Existing Kata `konnect-maintained#27jb` and
 `konnect-maintained#we5v` remain open pending coordinator verification and
 parent integration. No catalog, count or cleanup-plan changes belong here.
+The child subsequently merged parent `410675b` to reuse the verified export
+supervisor. The production private-property implementation is unchanged.
 
 ## Source verification
 
@@ -81,10 +83,21 @@ before invoking served move/readback. It logs the native version and command.
 KiCad would rightly reject the synthetic unknown child, so it is used only
 for the preservation tests, not the native input.
 
+Both native calls use the existing
+`tests/support/pcb_export_supervisor.py` from parent `410675b`, on Linux with
+Python 3.9+. Version discovery has its own 10-second native deadline; force
+upgrade has its own 45-second deadline. The wrapper owns process-group
+termination and subreaper cleanup independently of the Rust future.
+Rust awaits the wrapper with `kill_on_drop(false)` rather than blocking on
+`std::process::Command::output` or relying on an outer async timeout.
+Each phase must produce a finished audit with `group_reaped: true`, no timeout
+and no interruption. Native output still needs a successful exit status.
+
 With `KONNECT_TEST_NATIVE_ARTIFACT_DIR` set, the test copies the native CLI's
 output bytes and a provenance JSON with version, command, the base-fixture
 SHA-256 and the native-output SHA-256 into that directory. It does not record
-the prepared synthetic input's hash. This happens before Konnect's move.
+the prepared synthetic input's hash. The JSON also embeds the version/upgrade
+supervision audits and their deadlines. This happens before Konnect's move.
 Retrieve `private_fields_native.kicad_sch` and
 `private_fields_native.provenance.json` from the admitted job; they describe
 the native capture, not a captured or hashed prepared input.
@@ -174,10 +187,13 @@ python3 crates/konnect-core/tests/private_field_controls.py all --coordinator-ad
 
 The five controls are `wrong-parse`, `writer-flag-loss`, `wrong-binding`,
 `quoted-name-confusion` and `ordinary-only-setter`. A single control name can
-replace `all`. The runner pins the reviewed production, regression and fixture
-bytes from `90b9bc4` with SHA-256 preconditions, then requires unique source
-snippets within exact function boundaries. Source changes require a separate
-runner review and updated preconditions, not an automatic hash refresh.
+replace `all`. The runner pins the reviewed production from `90b9bc4`,
+regressions including the bounded native-test follow-up, fixtures and the
+supervisor imported from `410675b` with SHA-256 preconditions. It then requires
+unique source snippets within exact function boundaries. The native-test pin
+was deliberately updated for this follow-up; the production pins are unchanged.
+Source changes require a separate runner review and updated preconditions,
+not an automatic hash refresh.
 
 Only six exact focused model/served regressions are eligible. For `all`, it
 runs six positive prerequisites, nine expected-failure invocations and six
@@ -192,7 +208,7 @@ Each command defaults to 120 seconds, with a 180-second maximum. The work
 phase is capped at 360 seconds, with a separate 180-second recovery budget.
 Each invocation is aborted if its log exceeds 4 MiB, checked every 100 ms.
 Owned Cargo/test process groups are terminated on completion or failure before
-restoring the two mutable source files byte-for-byte in `finally`. All six
+restoring the two mutable source files byte-for-byte in `finally`. All seven
 protected inputs are compared after
 restoration, and focused positives run again even after a control error.
 Catchable interrupts take the cleanup path; SIGKILL, worker loss or a second

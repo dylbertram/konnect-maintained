@@ -2,7 +2,7 @@ use super::*;
 use crate::mcp::handler::McpHandler;
 use crate::tools::ServerConfig;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[path = "../../tests/fixtures/private_fields.rs"]
 mod fixture;
@@ -322,21 +322,79 @@ async fn served_duplicate_real_name_still_refuses_without_writing() {
     assert_eq!(std::fs::read_to_string(path).unwrap(), source);
 }
 
+/// Reuse the export gate's tested Linux subreaper, rather than placing a
+/// timeout around a blocking CLI call or duplicating process-group supervision.
+fn private_native_supervisor(directory: &Path, phase: &str, cli: &str, seconds: u32) -> PathBuf {
+    assert!(
+        cfg!(target_os = "linux"),
+        "native private-field supervision requires Linux and Python 3.9+"
+    );
+    let wrapper = directory.join(format!("private-native-{phase}.py"));
+    std::fs::write(
+        &wrapper,
+        include_str!("../../tests/support/pcb_export_supervisor.py"),
+    )
+    .unwrap();
+    std::fs::write(
+        wrapper.with_extension("json"),
+        serde_json::to_vec(&json!({
+            "program": cli,
+            "seconds": seconds,
+            "audit": wrapper.with_extension("audit"),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    wrapper
+}
+
+fn private_native_audit(wrapper: &Path) -> Value {
+    let audits = std::fs::read_dir(wrapper.with_extension("audit"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path().join("finished.json"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        audits.len(),
+        1,
+        "one supervised invocation per native phase"
+    );
+    let audit: Value = serde_json::from_slice(&std::fs::read(&audits[0]).unwrap()).unwrap();
+    assert_eq!(audit["group_reaped"], true, "{audit}");
+    assert_eq!(audit["timed_out"], false, "{audit}");
+    assert_eq!(audit["interrupted"], 0, "{audit}");
+    audit
+}
+
 #[tokio::test]
 #[ignore = "requires coordinator-admitted native KiCad CLI, never the live editor"]
 async fn served_private_fields_native_resave_and_readback() {
     let cli = std::env::var("KONNECT_TEST_KICAD_CLI").expect("KONNECT_TEST_KICAD_CLI is required");
-    let (_directory, path) = project(&fixture::source(false));
-    let version = std::process::Command::new(&cli)
+    let (directory, path) = project(&fixture::source(false));
+    let version_wrapper = private_native_supervisor(directory.path(), "version", &cli, 10);
+    // The wrapper owns an independent deadline and kills/reaps its native
+    // process group. Dropping this future must not kill that cleanup owner.
+    let version = tokio::process::Command::new(&version_wrapper)
         .arg("--version")
+        .kill_on_drop(false)
         .output()
+        .await
         .unwrap();
+    let version_audit = private_native_audit(&version_wrapper);
     assert!(version.status.success(), "{version:?}");
-    let upgraded = std::process::Command::new(&cli)
+    let upgrade_wrapper = private_native_supervisor(directory.path(), "upgrade", &cli, 45);
+    let upgraded = tokio::process::Command::new(&upgrade_wrapper)
         .args(["sch", "upgrade", "--force"])
         .arg(&path)
+        .kill_on_drop(false)
         .output()
+        .await
         .unwrap();
+    let upgrade_audit = private_native_audit(&upgrade_wrapper);
     assert!(upgraded.status.success(), "{upgraded:?}");
     let native = std::fs::read_to_string(&path).unwrap();
     assert!(native.contains("(property private \"MPN\""));
@@ -353,7 +411,13 @@ async fn served_private_fields_native_resave_and_readback() {
             "preparation":"synthetic private flags and quoted private field name; no unknown child",
             "native_version":String::from_utf8_lossy(&version.stdout).trim(),
             "command":["sch", "upgrade", "--force", "component_fields.kicad_sch"],
-            "native_sha256":format!("{:x}", sha2::Sha256::digest(native.as_bytes()))
+            "native_sha256":format!("{:x}", sha2::Sha256::digest(native.as_bytes())),
+            "supervision":{
+                "version_seconds":10,
+                "upgrade_seconds":45,
+                "version":version_audit,
+                "upgrade":upgrade_audit
+            }
         });
         std::fs::write(
             directory.join("private_fields_native.provenance.json"),
