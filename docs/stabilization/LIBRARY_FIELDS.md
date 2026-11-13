@@ -77,6 +77,20 @@ plugin from the newly empty `A6.pretty`. The helper now explicitly constructs
 uses that plugin instance's `FootprintSave`. No seed CAD, plugin-name heuristic
 or unverified plugin-manager enum is used.
 
+Native v3 `cmd_brzxgphxmsfb` reached every sync/refresh comparison and populated
+the actual/expected fields, then failed with `EBUSY` removing disposable
+`home/.gvfs`. This is an overall failed run due to cleanup, not a field mismatch
+and not accepted native evidence. Preserve its failed root and retrieved
+`native-v3-full.log` / `native-v3/target/a6-native-v3` artifacts; do not reuse
+or manually delete that root.
+
+Coordinator read-only reconciliation `cmd_dnij1fbajqjs` found no remaining
+ka6/helper/editor/Konnect processes. The observed gvfsd/gvfsd-fuse processes and
+`/run/user/1000/gvfs` mount predated the tests and belonged to shared desktop
+services. No orphan or ownership claim is inferred from those observations.
+This child does not kill, unmount or otherwise repair those shared services.
+The new helper must run with a fresh root and prove its own cleanup.
+
 ## Source review and replacement boundary
 
 The archived #820 record has three discussion comments, zero formal reviews and
@@ -285,11 +299,66 @@ including raw angle, thickness, side, visibility, upright and position.
 Sync must also return no field-readback diagnostics from the actual IPC query.
 There is no mock IPC or fabricated native oracle.
 
-Run it under the **existing export supervisor**, which owns a 60-second runtime
-cutoff, process-group termination and Linux subreaping. Native helper children
-stay in that group. The helper also closes its own MCP child and disposable
-editor in `finally`. An external cancellation must not bypass the supervisor.
-Use a fresh output path each run, and retain failure artifacts.
+### Desktop isolation and lifecycle
+
+Before importing `pcbnew` or starting a child, the helper selects these settings
+in its own process and child environments, never in the worker's global settings:
+
+- `GIO_USE_VFS=local`, selecting GLib's local VFS rather than desktop GVFS.
+  See [`g_vfs_get_default`](https://github.com/GNOME/glib/blob/2.80.0/gio/gvfs.c#L343-L366).
+- `GSETTINGS_BACKEND=memory`, so settings are not stored/shared through dconf.
+  See [GLib's backend selection](https://github.com/GNOME/glib/blob/2.80.0/gio/gsettingsbackend.c#L978-L1025).
+- `GTK_USE_PORTAL=0`, disabling opt-in portal use in the non-Flatpak worker.
+  See [GTK 3's portal selection](https://github.com/GNOME/gtk/blob/3.24.41/gtk/gtkprivate.c#L270-L292).
+- `DBUS_SESSION_BUS_ADDRESS=unix:path=<fresh-owned-runtime>/no-session-bus`,
+  an explicitly unavailable socket, and no inherited D-Bus starter variables.
+  [GLib uses an explicit session address without its discovery/autolaunch fallback](https://github.com/GNOME/glib/blob/2.80.0/gio/gdbusaddress.c#L1345-L1355).
+  This test does not need a session bus and must not request desktop activation.
+- Private HOME/config/data/cache/runtime paths, a mode-0700 runtime directory,
+  and `NO_AT_BRIDGE=1`. These controls are not a security sandbox.
+
+`NativeRun` registers each owned editor immediately after launch, adopts orphan
+descendants with Linux `PR_SET_CHILD_SUBREAPER` in the helper itself, and closes
+all registered editor leaders and the MCP leader **before** attempting temporary
+directory deletion. EOF/terminate/kill/reap operations address only those
+explicitly spawned leaders. Post-kill waits are bounded; the helper never signals
+a discovered service or performs an unmount.
+
+`native-lifecycle.json` records process metadata, not arguments or environment:
+preexisting desktop services; owned descendant PID/PPID/group/session/start-time
+snapshots; nonblocking reaped adopted-child statuses; possible group/session
+escapes; newly observed desktop-service candidates; mounts under the owned root;
+and removal/cleanup errors. New unrelated desktop activity is not automatically
+attributed to the test. After leader closure, a three-second settle/reap/audit
+requires two consecutive snapshots without owned descendants, including adopted
+children outside the original group/session. Observed PID/start-time identities
+remain tracked across reparenting. New desktop-service candidates fail the audit
+for coordinator reconciliation, without asserting test ownership or signalling
+them. Mount auditing reads `/proc/self/mountinfo` only for the
+fresh root. Any live descendant, audit error or owned-root mount fails and
+retains the root without signalling services or unmounting anything.
+
+`shutil.rmtree` is attempted only after those checks. A removal error, including
+`EBUSY`, remains a cleanup failure, never ignored. Original comparison/native
+exceptions and their traceback are preserved even if cleanup also fails; cleanup
+errors and tracebacks are recorded separately. Evidence-writing errors also
+produce a failed exit without masking an already active primary exception.
+
+Overall `status: "passed"` is set only after field comparisons **and** successful
+owned-child closure, descendant/mount audit and root removal. A comparison-only
+success is separately `field_comparisons: "passed"` and is not acceptance.
+Require `lifecycle.temporary_directory_removed: true`, empty cleanup errors and
+no remaining owned descendants in the final audit, plus the supervisor's final
+audit. `group_reaped` alone is insufficient.
+
+Run under the **existing export supervisor**, which independently owns a
+60-second runtime cutoff, process-group termination and Linux subreaping. On
+cancellation it still stops/reaps group members. Deliberate session escapes,
+SIGKILL or worker failure are outside a process-group-only cleanup guarantee;
+the helper's normal-exit audit detects surviving owned descendants but does not
+claim to repair them. A failed/missing lifecycle audit requires coordinator
+reconciliation or worker disposal, not manual service cleanup. Use a fresh output
+path and root for every retry; preserve failure artifacts.
 
 After the coordinator admits the worker:
 
@@ -313,17 +382,48 @@ The source snapshot may have no `.git`, so the helper records the explicit
 revision rather than inventing one:
 
 ```sh
+native_status=0
 xvfb-run -a /usr/bin/python3 target/a6-supervisor/run.py \
   crates/konnect-core/tests/library_field_native.py \
   --disposable-worker --konnect "$PWD/target/debug/konnect" \
-  --source-revision "$SOURCE_REVISION" --out "$PWD/target/a6-native"
-tar -czf target/a6-native-evidence.tar.gz target/a6-native target/a6-supervisor/audit
+  --source-revision "$SOURCE_REVISION" --out "$PWD/target/a6-native" || native_status=$?
+cleanup_status=0
+/usr/bin/python3 - <<'PY' || cleanup_status=$?
+import json
+from pathlib import Path
+out = Path("target/a6-native")
+report = json.loads((out / "native-fields.json").read_text())
+audit = json.loads((out / "native-lifecycle.json").read_text())
+assert report["status"] == report["field_comparisons"] == "passed", report
+assert audit["temporary_directory_removed"] is True, audit
+assert audit["cleanup_errors"] == [], audit
+assert audit["mounts_under_control_root"] == [], audit
+assert audit["snapshots"][-1]["owned_descendants"] == [], audit
+assert all(not snapshot["new_desktop_service_candidates"]
+           for snapshot in audit["snapshots"]), audit
+# Check again after the helper has exited, not only inside its cleanup method.
+assert not Path(audit["control_root"]).exists(), audit
+PY
+archive_status=0
+tar -czf target/a6-native-evidence.tar.gz target/a6-native target/a6-supervisor/audit || archive_status=$?
+if [ "$native_status" -ne 0 ]; then
+  exit "$native_status"
+fi
+if [ "$cleanup_status" -ne 0 ]; then
+  exit "$cleanup_status"
+fi
+exit "$archive_status"
 ```
+
+This retains failure artifacts but never lets a successful archive command
+hide either the native command's original failure or the post-exit cleanup check.
 
 Request artifact `target/a6-native-evidence.tar.gz`. Key contents:
 
 - `native-fields.json`, including version, supplied revision, operation and
   passed/failed/incomplete status;
+- `native-lifecycle.json`, including descendant/session/mount audit and proven
+  removal or explicit retention of the fresh control root;
 - `native-operation-control.kicad_pcb` and `native-operation-control.json`;
 - `fallback-native-fields.json`;
 - `fallback-native-precondition.json`, proving the native-saved duplicate names;

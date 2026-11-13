@@ -7,6 +7,7 @@ No package installation, mock CLI, fabricated IPC, or live project is used.
 All CAD is authored/saved by pcbnew or public Konnect tools in a new directory.
 """
 import argparse
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -17,10 +18,193 @@ import subprocess
 import sys
 import tempfile
 import time
-
-import pcbnew
+import traceback
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def process_table():
+    """Read metadata only, never another process's arguments or environment."""
+    result = {}
+    for path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            raw = path.read_text()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        name, tail = raw[raw.index("(") + 1:].rsplit(")", 1)
+        columns = tail.split()
+        pid = int(path.parent.name)
+        result[pid] = {
+            "pid": pid, "name": name, "ppid": int(columns[1]),
+            "group": int(columns[2]), "session": int(columns[3]),
+            "started_ticks": int(columns[19]),
+        }
+    return result
+
+
+def descendants(table):
+    owned = {os.getpid()}
+    while True:
+        more = {pid for pid, item in table.items() if item["ppid"] in owned}
+        if more <= owned:
+            break
+        owned |= more
+    return [item for pid, item in table.items() if pid in owned and pid != os.getpid()]
+
+
+def desktop_service(item):
+    return any(name in item["name"] for name in ("gvfs", "dbus", "dconf", "at-spi", "xdg-desktop"))
+
+
+def owned_mounts(root):
+    mounts = []
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        point = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), line.split()[4])
+        if point == root or point.startswith(root + "/"):
+            mounts.append(point)
+    return mounts
+
+
+class NativeRun:
+    """Own leaders, adopt orphan descendants, audit before deleting a fresh root.
+
+    Never signals discovered services/descendants or unmounts anything. A live
+    descendant, mount, audit error or removal error fails and retains the root.
+    """
+    def __init__(self, out, report):
+        self.out, self.report = out, report
+        self.api = None
+        self.editors = []
+        self.known_children = {}
+        self.audit = {"snapshots": [], "reaped_adopted_children": []}
+
+    def __enter__(self):
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER, this helper only
+            raise OSError(ctypes.get_errno(), "native helper subreaper setup failed")
+        self.baseline = process_table()
+        self.group, self.session = os.getpgrp(), os.getsid(0)
+        self.audit["preexisting_desktop_services"] = [
+            item for item in self.baseline.values() if desktop_service(item)
+        ]
+        self.temporary = tempfile.mkdtemp(prefix="ka6-")
+        self.audit.update(control_root=self.temporary, helper_pid=os.getpid(),
+                          group=self.group, session=self.session)
+        return self
+
+    def checkpoint(self, name):
+        table = process_table()
+        children = descendants(table)
+        for item in children:
+            self.known_children[item["pid"]] = item["started_ticks"]
+        # Keep following observed identities even if a later /proc snapshot
+        # races with reparenting. Never infer ownership from a reused PID.
+        children = [
+            item for pid, item in table.items()
+            if self.known_children.get(pid) == item["started_ticks"]
+        ]
+        for item in children:
+            item["outside_helper_group_or_session"] = (
+                item["group"] != self.group or item["session"] != self.session
+            )
+        observed = {
+            "stage": name, "owned_descendants": children,
+            # New shared-service activity is not automatically attributed to us.
+            "new_desktop_service_candidates": [
+                item for pid, item in table.items()
+                if desktop_service(item) and (
+                    pid not in self.baseline
+                    or item["started_ticks"] != self.baseline[pid]["started_ticks"]
+                )
+            ],
+        }
+        self.audit["snapshots"].append(observed)
+        return children
+
+    def __exit__(self, kind, primary, trace):
+        errors = []
+
+        def attempt(stage, operation):
+            try:
+                return operation()
+            except BaseException as error:
+                errors.append({"stage": stage, "error": repr(error),
+                               "traceback": traceback.format_exc()})
+                return None
+
+        attempt("before_close_audit", lambda: self.checkpoint("before_close"))
+        for editor in self.editors:
+            attempt(f"close_owned_editor_{editor.pid}", lambda p=editor: stop_editor(p))
+        if self.api is not None:
+            attempt("close_owned_mcp", self.api.close)
+        self.audit["owned_leaders"] = [
+            {"kind": "editor", "pid": editor.pid, "status": editor.returncode}
+            for editor in self.editors
+        ]
+        if self.api is not None:
+            self.audit["owned_leaders"].append({
+                "kind": "mcp", "pid": self.api.process.pid,
+                "status": self.api.process.returncode,
+            })
+
+        def settle_and_audit():
+            deadline = time.monotonic() + 3
+            empty_snapshots = 0
+            while True:
+                while True:
+                    try:
+                        pid, status = os.waitpid(-1, os.WNOHANG)
+                    except ChildProcessError:
+                        break
+                    if not pid:
+                        break
+                    self.audit["reaped_adopted_children"].append({
+                        "pid": pid, "status": os.waitstatus_to_exitcode(status),
+                    })
+                children = self.checkpoint("after_close")
+                empty_snapshots = 0 if children else empty_snapshots + 1
+                if empty_snapshots >= 2:
+                    return
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"owned descendants did not settle; no service signalled: {children}"
+                    )
+                time.sleep(0.05)
+
+        attempt("descendant_audit", settle_and_audit)
+        candidates = [
+            item for snapshot in self.audit["snapshots"]
+            for item in snapshot["new_desktop_service_candidates"]
+        ]
+        if candidates:
+            errors.append({
+                "stage": "desktop_service_audit",
+                "error": "new desktop-service candidates require coordinator reconciliation",
+                "candidates": candidates,
+            })
+        mounts = attempt("mount_audit", lambda: owned_mounts(self.temporary))
+        self.audit["mounts_under_control_root"] = mounts
+        if mounts:
+            errors.append({"stage": "mount_audit", "error": f"owned root has mounts: {mounts}"})
+        if not errors:
+            attempt("remove_control_root", lambda: shutil.rmtree(self.temporary))
+        removed = attempt("verify_control_root_absence", lambda: not Path(self.temporary).exists())
+        self.audit["temporary_directory_removed"] = removed is True
+        if not self.audit["temporary_directory_removed"] and not errors:
+            errors.append({"stage": "remove_control_root", "error": "control root remains"})
+        self.audit["cleanup_errors"] = errors
+        if primary is not None:
+            self.audit["primary_error"] = repr(primary)
+        self.report["lifecycle"] = self.audit
+        attempt("write_lifecycle_audit", lambda: (self.out / "native-lifecycle.json").write_text(
+            json.dumps(self.audit, indent=2)
+        ))
+        if errors:
+            self.report["cleanup_errors"] = errors
+            if primary is None:
+                raise RuntimeError(f"native lifecycle cleanup failed: {errors}")
+        # Do not replace a field assertion/native exception with a cleanup error.
+        return False
 
 
 def fields(footprint):
@@ -133,23 +317,24 @@ class Api:
             self.process.wait(timeout=3)
         except subprocess.TimeoutExpired:
             self.process.kill()
-            self.process.wait()
+            self.process.wait(timeout=3)
+        self.process.stdout.close()
         self.log.close()
 
 
 def stop_editor(editor):
     if editor is not None and editor.poll() is None:
-        # Only this test's disposable editor. save_project already verified its
-        # native save; failure cleanup must not leave a modal editor running.
+        # Only this test's disposable editor. Successful paths save first;
+        # failure cleanup must not leave an owned modal editor running.
         editor.terminate()
         try:
             editor.wait(timeout=3)
         except subprocess.TimeoutExpired:
             editor.kill()
-            editor.wait()
+            editor.wait(timeout=3)
 
 
-def open_editor(board, environment, api, log):
+def open_editor(board, environment, api, log, run):
     socket = Path(environment["TMPDIR"]) / "kicad/api.sock"
     # Previous editor, if any, was stopped and reaped by this helper. Only this
     # disposable control directory can contain the stale endpoint.
@@ -157,8 +342,10 @@ def open_editor(board, environment, api, log):
     output = log.open("w")
     editor = subprocess.Popen(["pcbnew", str(board)], env=environment,
                               stdout=output, stderr=output)
+    run.editors.append(editor)
     output.close()
     try:
+        run.checkpoint("editor_started")
         deadline = time.monotonic() + 15
         while True:
             assert editor.poll() is None, log.read_text()
@@ -170,7 +357,8 @@ def open_editor(board, environment, api, log):
                     return editor
             time.sleep(0.1)
     except BaseException:
-        stop_editor(editor)
+        # NativeRun closes this registered leader before directory cleanup,
+        # preserving this original exception even if that cleanup also fails.
         raise
 
 
@@ -225,6 +413,8 @@ def native_operation_control(library, out):
 
 
 def main():
+    global pcbnew
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--disposable-worker", action="store_true", required=True)
     parser.add_argument("--konnect", type=Path, required=True)
@@ -232,18 +422,19 @@ def main():
     parser.add_argument("--source-revision", required=True)
     args = parser.parse_args()
     assert sys.platform == "linux" and os.environ.get("DISPLAY")
-    assert str(pcbnew.Version()).startswith("10."), pcbnew.Version()
     binary = args.konnect.resolve(strict=True)
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
-    report = {"kicad": pcbnew.Version(), "source_revision": args.source_revision,
-              "status": "incomplete",
+    report = {"source_revision": args.source_revision,
+              "status": "incomplete", "field_comparisons": "incomplete",
               "scope": "field-only sync additions and supported scratch refresh",
               "rotation_operation": "FOOTPRINT::Rotate about its own anchor after optional Flip(anchor, False)"}
     api = None
     editor = None
+    primary = None
     try:
-        with tempfile.TemporaryDirectory(prefix="ka6-") as temporary:
+        with NativeRun(out, report) as run:
+            temporary = run.temporary
             control = Path(temporary)
             home = control / "home"
             home.mkdir()
@@ -273,12 +464,35 @@ def main():
                     "(design_block_lib_table\n  (version 7)\n)\n"
                 )
                 report["design_block_table_setup"] = "empty_disposable_home"
+            runtime = control / "runtime"
+            runtime.mkdir(mode=0o700)
+            unavailable_bus = runtime / "no-session-bus"
+            assert not unavailable_bus.exists()
             environment = {**os.environ, "HOME": str(home),
                            "XDG_CONFIG_HOME": str(home / ".config"),
                            "XDG_DATA_HOME": str(home / ".local/share"),
+                           "XDG_CACHE_HOME": str(home / ".cache"),
+                           "XDG_RUNTIME_DIR": str(runtime),
                            "KICAD_CONFIG_HOME": str(config_home), "TMPDIR": temporary,
                            "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
+                           "GIO_USE_VFS": "local", "GSETTINGS_BACKEND": "memory",
+                           "GTK_USE_PORTAL": "0", "NO_AT_BRIDGE": "1",
+                           "DBUS_SESSION_BUS_ADDRESS": f"unix:path={unavailable_bus}",
                            "LIBGL_ALWAYS_SOFTWARE": "1"}
+            for key in ["DBUS_STARTER_ADDRESS", "DBUS_STARTER_BUS_TYPE"]:
+                environment.pop(key, None)
+                os.environ.pop(key, None)
+            # Isolate the helper too, before loading native libraries that can
+            # initialize GIO/GTK singletons, not just its editor/MCP children.
+            os.environ.update(environment)
+            report["desktop_isolation"] = {
+                "GIO_USE_VFS": "local", "GSETTINGS_BACKEND": "memory",
+                "GTK_USE_PORTAL": "0", "NO_AT_BRIDGE": "1",
+                "session_bus": "nonexistent_owned_socket",
+            }
+            import pcbnew
+            assert str(pcbnew.Version()).startswith("10."), pcbnew.Version()
+            report["kicad"] = pcbnew.Version()
             config = control / "server.json"
             config.write_text(json.dumps({
                 "kicad_cli": shutil.which("kicad-cli"),
@@ -287,6 +501,8 @@ def main():
             }))
             assert json.loads(config.read_text())["kicad_cli"]
             api = Api(binary, config, environment, out / "konnect.log")
+            run.api = api
+            run.checkpoint("mcp_started")
             project = out / "project"
             api.call("create_project", {"path": str(project), "name": "a6"})
             library = project / "A6.pretty"
@@ -361,7 +577,7 @@ def main():
             ]})
             board = project / "a6.kicad_pcb"
             save_native(board, pcbnew.BOARD())
-            editor = open_editor(board, environment, api, out / "sync-editor.log")
+            editor = open_editor(board, environment, api, out / "sync-editor.log", run)
             plan = api.call("update_pcb_from_schematic", {
                 "schematic": str(schematic), "board": str(board)})
             assert plan["status"] == "ready", plan
@@ -417,7 +633,7 @@ def main():
                         field.SetText("damaged-before-refresh")
             save_native(board, refresh)
             shutil.copy(board, out / "refresh-native-before.kicad_pcb")
-            editor = open_editor(board, environment, api, out / "refresh-editor.log")
+            editor = open_editor(board, environment, api, out / "refresh-editor.log", run)
             plan = api.call("update_footprints_from_library", {"board": str(board), "references": refs})
             assert plan["status"] == "ready", plan
             applied = api.call("update_footprints_from_library", {
@@ -431,17 +647,35 @@ def main():
             actual = inspect(board)
             compare(actual, expected)
             assert ordinary_texts(board) == ordinary_texts(out / "refresh-native-control.kicad_pcb")
-            report.update(status="passed", sync_fields=inspect(out / "sync-native-saved.kicad_pcb"),
+            report.update(field_comparisons="passed", sync_fields=inspect(out / "sync-native-saved.kicad_pcb"),
                           refresh_fields=actual, refresh_expected=expected)
+        # NativeRun closed owned leaders, audited/reaped descendants and
+        # removed the control root. Comparisons alone cannot set overall pass.
+        report["status"] = "passed"
     except BaseException as error:
-        report.update(status="failed", error=repr(error))
+        primary = error
+        report.update(status="failed", error=repr(error), traceback=traceback.format_exc())
         raise
     finally:
-        stop_editor(editor)
+        artifact_errors = []
         if api is not None:
-            (out / "served-responses.json").write_text(json.dumps(api.responses, indent=2))
-            api.close()
-        (out / "native-fields.json").write_text(json.dumps(report, indent=2))
+            try:
+                (out / "served-responses.json").write_text(json.dumps(api.responses, indent=2))
+            except BaseException as error:
+                artifact_errors.append({"artifact": "served-responses.json", "error": repr(error)})
+        if artifact_errors:
+            report.update(status="failed", artifact_errors=artifact_errors)
+        try:
+            (out / "native-fields.json").write_text(json.dumps(report, indent=2))
+        except BaseException as error:
+            artifact_errors.append({"artifact": "native-fields.json", "error": repr(error)})
+        if artifact_errors:
+            try:
+                print(f"native evidence write errors: {artifact_errors}", file=sys.stderr)
+            except BaseException as error:
+                artifact_errors.append({"artifact": "stderr", "error": repr(error)})
+            if primary is None:
+                raise RuntimeError(f"native evidence write errors: {artifact_errors}")
     print(json.dumps(report, indent=2))
 
 
