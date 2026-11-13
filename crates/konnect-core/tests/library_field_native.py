@@ -290,7 +290,14 @@ def main():
             project = out / "project"
             api.call("create_project", {"path": str(project), "name": "a6"})
             library = project / "A6.pretty"
-            library.mkdir()
+            # The convenience FootprintSave guesses a plugin from existing
+            # contents and cannot identify a newly empty library. Select the
+            # native format explicitly, without a guessed manager enum.
+            # CreateLibrary requires that the target directory not yet exist.
+            library_writer = pcbnew.PCB_IO_KICAD_SEXPR()
+            library_writer.CreateLibrary(str(library))
+            assert library.is_dir(), "native plugin did not create the library"
+            report["footprint_library_writer"] = "PCB_IO_KICAD_SEXPR.CreateLibrary/FootprintSave"
             # Use an existing pcbnew-authored footprint. Changes below go
             # through KiCad's model and FootprintSave, never S-expression edits.
             fixture_dir = ROOT / "crates/konnect-core/tests/fixtures"
@@ -318,7 +325,7 @@ def main():
                     assert sum(f.GetName() == "KiLib_Generator" for f in fp.GetFields()) == 2
                 else:
                     assert any(f.GetName() == "AssemblyVendor" for f in fp.GetFields())
-                pcbnew.FootprintSave(str(library), fp)
+                library_writer.FootprintSave(str(library), fp)
                 saved_library = library / f"{name}.kicad_mod"
                 assert saved_library.is_file()
                 if name == "FallbackDuplicate":

@@ -67,6 +67,16 @@ That is a configuration-layout assumption in the helper, not field acceptance
 evidence or proof that KiCad's design-block capability is unavailable. The
 minimal helper correction below has not been executed by the child.
 
+Coordinator reports all 12 isolated `d612c964` mutation controls passed their
+expected failure checks, with all nine positives passing again after exact
+source restoration. Production Rust remains unchanged in the helper follow-ups.
+Native `c9f3409` command `cmd_nzt49exyhq5q` got past configuration and failed
+before production because convenience `pcbnew.FootprintSave` could not infer a
+plugin from the newly empty `A6.pretty`. The helper now explicitly constructs
+`PCB_IO_KICAD_SEXPR`, invokes `CreateLibrary` on the not-yet-existing path and
+uses that plugin instance's `FootprintSave`. No seed CAD, plugin-name heuristic
+or unverified plugin-manager enum is used.
+
 ## Source review and replacement boundary
 
 The archived #820 record has three discussion comments, zero formal reviews and
@@ -219,6 +229,18 @@ No extra installation is required to resolve this missing optional template.
 The helper loads the existing native socket through `pcbnew.FootprintLoad`,
 authors four library variants through the native model and `FootprintSave`,
 then registers their project-local library through the public Konnect tool.
+For writing it explicitly selects `pcbnew.PCB_IO_KICAD_SEXPR()`, whose
+[native constructor and methods](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.h#L388-L406)
+accept `CreateLibrary(path)` and `FootprintSave(path, footprint)` with optional
+properties omitted. Native
+[`CreateLibrary`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp#L3512-L3526)
+refuses an existing directory, so the helper no longer pre-creates `A6.pretty`.
+Native
+[`FootprintSave`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp#L3360-L3367)
+sets library-format control flags itself. The helper asserts directory/file
+creation and the saved duplicate-property precondition as before, and records
+`footprint_library_writer` in `native-fields.json`. No hand-authored footprint
+is needed to make plugin inference succeed.
 Its visible custom field also checks for duplicate ordinary-text drawings.
 It creates a new synthetic project through public tools. The live sync runs
 through stdio MCP with real `kicad-cli` and the helper's own headless PCB Editor.
