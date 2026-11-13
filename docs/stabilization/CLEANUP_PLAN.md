@@ -56,6 +56,22 @@ The complete inventory and packet boundaries are in `FIX_BATCHES.md`.
 - Reproduction-only, platform-dependent and deferred-capability work remains
   gated on its actual environment, scope and evidence.
 
+### Next bounded safety packet
+
+Source qualification of `3bqz/emvb` found that library-input guards do not
+inspect native children on the placed footprints being replaced. After the
+field foundation lands, inventory the exact live document by footprint KIID
+and refuse replacements owning `group`, `point` or `variant` children, in both
+sync and library refresh. Check dry run and recheck apply before any mutation;
+unknown inventory must fail closed. Noop and additions-only paths stay unchanged.
+
+Do not repeat the archived blanket loss rationale. KiCad 10.0.8 serializes
+points and variants, but our typed schema lacks newer variant fields; owned
+groups remain distinct from board-level group membership. Current sync point
+loss is not established. The three-kind refusal is a bounded compatibility
+policy, not universal preservation or A7 propagation. Runtime reproduction,
+native fixture provenance and no-mutation served controls remain required.
+
 ## Verification and closure
 
 The coordinator owns remote execution admission. Agents must not compete for
