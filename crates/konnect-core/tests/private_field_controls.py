@@ -26,7 +26,7 @@ HASHES = {
     Path("crates/konnect-schematic-editor/tests/private_properties.rs"):
         "5e569e9171c5700092fa09b6864fd7c99e77b60f4bb375f55309d9bd041274ec",
     Path("crates/konnect-core/src/tools/sch_private_fields_tests.rs"):
-        "baf8cda0e443085d2e70bc3cf77f328f7f9dbacfaa74f8a6c8b64ab9532be6e7",
+        "a9e0c9ba63aa903f5a3a1292eb1a2d74ae3ce14e8a51932ee0117bbadf7ce55f",
     Path("crates/konnect-core/tests/support/pcb_export_supervisor.py"):
         "95108143509ca77a8b3e112ebe6e9386daf33e21712c67afa3213bd57fa0a665",
     Path("crates/konnect-core/tests/fixtures/private_fields.rs"):
@@ -51,6 +51,12 @@ TESTS = {
     ),
     "served-placement": (
         "served", SERVED + "served_private_field_placement_changes_only_its_at_child",
+    ),
+    "served-harmless": (
+        "served", SERVED + "served_harmless_edit_preserves_private_fields_and_every_unrelated_byte",
+    ),
+    "served-readback-only": (
+        "served", SERVED + "served_readback_only_edit_keeps_private_fields_and_source_unchanged",
     ),
 }
 CONTROLS = {
@@ -288,7 +294,12 @@ def main():
     names = list(CONTROLS) if args.control == "all" else [args.control]
     # Validate every requested source replacement before starting any command.
     changes = {name: mutate(originals, name) for name in names}
-    keys = list(dict.fromkeys(key for name in names for key in CONTROLS[name]))
+    # Always exercise a genuine changed-byte edit and a readback-only request
+    # before/after controls, even though neither is itself a mutation target.
+    keys = list(dict.fromkeys(
+        ["served-harmless", "served-readback-only"]
+        + [key for name in names for key in CONTROLS[name]]
+    ))
     directory = (ROOT / args.output_dir).resolve()
     directory.mkdir(parents=True, exist_ok=False)
     deadline = time.monotonic() + args.work_budget

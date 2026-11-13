@@ -115,7 +115,7 @@ to stdout using the already-installed Rust 1.96.0 formatter. Edits were
 applied with the patch tool. `git diff --check` is a whitespace inspection,
 not a test result.
 
-Coordinator-admitted positive commands, not yet executed:
+Coordinator positive commands for the corrected snapshot, not executed here:
 
 ```sh
 cargo test -p konnect-schematic-editor --locked --test private_properties
@@ -128,7 +128,26 @@ names/values, missing names/values, empty values, ordered known/unknown
 children, whole-file save and reload, and the unchanged native no-flag case.
 The served module covers get/list, an exact-byte harmless edit, private and
 quoted-name updates on all U1 units, private field placement, whole-file moves
-of R1 and U1, and duplicate-real-name refusal with unchanged source.
+of R1 and U1, duplicate-real-name refusal with unchanged source, and an
+explicit readback-only edit with empty changes and unchanged source.
+
+The coordinator's pre-pause job `ee04d7f0-b3c1-43de-ba67-c73a192cedc9`
+tested `93d3db5`: four model tests passed; six served tests passed, one failed
+and one was ignored. The failure was the harmless-edit test's own precondition,
+before its served edit call. It searched R1's placed block for
+`(property "Value" "R"` even though the native fixture and failure output
+both contain `(property "Value" "10k"`. Its text replacement therefore changed
+nothing. This is a test-fixture mismatch, not evidence of a production no-op.
+
+The corrected regression pins exactly one old `"10k"` header and requests
+`"11k"`. It retains the non-no-op preconditions, compares the complete written
+file against the independently constructed single-span expected source, and
+checks served readback plus all private fields. A separate readback-only
+request verifies empty changes and exact original bytes. The control runner's
+before/restored positives now include both tests, and its test-source pin was
+deliberately updated. No production source changed for this correction.
+No corrected tests have run here. The failed job never reached native capture
+or the five controls; missing artifact errors do not establish native results.
 
 Native command, only on a coordinator-admitted target with KiCad provisioned:
 
@@ -195,8 +214,8 @@ was deliberately updated for this follow-up; the production pins are unchanged.
 Source changes require a separate runner review and updated preconditions,
 not an automatic hash refresh.
 
-Only six exact focused model/served regressions are eligible. For `all`, it
-runs six positive prerequisites, nine expected-failure invocations and six
+Only eight exact focused model/served regressions are eligible. For `all`, it
+runs eight positive prerequisites, nine expected-failure invocations and eight
 restored positives. It requires the exact named test failure, one-test harness
 summary and exit 101; compiler/build failures, missing tests, timeouts and log
 overflow fail the runner rather than count as reproduction. Cargo runs with

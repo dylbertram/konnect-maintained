@@ -117,20 +117,21 @@ async fn served_harmless_edit_preserves_private_fields_and_every_unrelated_byte(
     assert_eq!(blocks.len(), 1);
     let (start, end) = blocks[0];
     let block = &source[start..end];
-    let changed = block.replacen(
-        "(property \"Value\" \"R\"",
-        "(property \"Value\" \"harmless\"",
-        1,
-    );
+    // R1's placed value in the native fixture is "10k", not the library's
+    // default "R". Pin the old bytes so this oracle cannot silently be a no-op.
+    let old_value = "(property \"Value\" \"10k\"";
+    assert_eq!(block.matches(old_value).count(), 1);
+    let changed = block.replacen(old_value, "(property \"Value\" \"11k\"", 1);
     assert_ne!(changed, block);
     let expected = format!("{}{}{}", &source[..start], changed, &source[end..]);
+    assert_ne!(expected, source);
     let result = call(
         &handler,
         "edit_schematic_component",
-        json!({"schematic":path, "reference":"R1", "value":"harmless"}),
+        json!({"schematic":path, "reference":"R1", "value":"11k"}),
     )
     .await;
-    assert_eq!(result["value"], "harmless");
+    assert_eq!(result["value"], "11k");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
     let read = call(
         &handler,
@@ -138,7 +139,25 @@ async fn served_harmless_edit_preserves_private_fields_and_every_unrelated_byte(
         json!({"schematic":path, "reference":"R1"}),
     )
     .await;
+    assert_eq!(read["value"], "11k");
     assert_properties(&read["properties"], "R1");
+}
+
+#[tokio::test]
+async fn served_readback_only_edit_keeps_private_fields_and_source_unchanged() {
+    let source = fixture::source(true);
+    let (_directory, path) = project(&source);
+    let handler = handler().await;
+    let result = call(
+        &handler,
+        "edit_schematic_component",
+        json!({"schematic":path, "reference":"R1"}),
+    )
+    .await;
+    assert_eq!(result["changes"], json!([]));
+    assert_eq!(result["value"], "10k");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+    assert_properties(&result["fields"], "R1");
 }
 
 #[tokio::test]
