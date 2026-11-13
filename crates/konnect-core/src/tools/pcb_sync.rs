@@ -200,6 +200,8 @@ struct SyncDiagnostic {
     references: Vec<String>,
     /// The library footprint the diagnostic is about, when it is about one.
     footprint_id: Option<String>,
+    #[serde(flatten)]
+    children: Option<super::native_footprint_children::Details>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -397,6 +399,50 @@ pub(crate) async fn handle_update_pcb_from_schematic(
             restage_additions(&mut plan, &prepared, snapshot.state.bounds);
             refresh_revision_with_staging(&mut plan);
             plan.diagnostics.extend(library_fields_not_carried(&plan, &prepared));
+
+            // Recomputed from the fresh bound live document on every request,
+            // including apply even when the protobuf revision is unchanged.
+            let targets = plan
+                .changes
+                .iter()
+                .filter_map(|change| {
+                    let PlannedChange::Update { kiid, reference, .. } = change else {
+                        return None;
+                    };
+                    let library_id = snapshot
+                        .state
+                        .footprints
+                        .iter()
+                        .find(|footprint| footprint.kiid == *kiid)
+                        .map(|footprint| footprint.footprint_id.clone())
+                        .unwrap_or_default();
+                    Some(super::native_footprint_children::Target {
+                        reference: reference.clone(),
+                        kiid: kiid.clone(),
+                        library_id,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let child_conflicts = super::native_footprint_children::preflight(
+                client,
+                &snapshot.document,
+                &targets, // A8 sync inventory targets
+            )
+            .into_iter()
+            .map(|refusal| {
+                let mut diagnostic = footprint_conflict(
+                    super::native_footprint_children::DIAGNOSTIC,
+                    refusal.message(),
+                    &refusal.details.library_id,
+                    vec![refusal.reference.clone()],
+                );
+                diagnostic.children = Some(refusal.details);
+                diagnostic
+            })
+            .collect::<Vec<_>>();
+            if !child_conflicts.is_empty() {
+                refuse_plan(&mut plan, child_conflicts);
+            }
 
             if dry_run || plan.status == PlanStatus::Conflict {
                 let status = match plan.status {
@@ -913,6 +959,7 @@ fn conflict(code: &str, message: String, reference: Option<&str>) -> SyncDiagnos
         reference: reference.map(str::to_string),
         references: reference.map(str::to_string).into_iter().collect(),
         footprint_id: None,
+        children: None,
     }
 }
 
@@ -934,6 +981,7 @@ fn footprint_conflict(
         },
         references,
         footprint_id: Some(footprint_id.to_string()),
+        children: None,
     }
 }
 
@@ -4422,6 +4470,14 @@ mod tests {
         let footprints_before = state.footprints.lock().unwrap().clone();
         let zones_before = state.zones.lock().unwrap().clone();
         let responder_state = state.clone();
+        // SYNTHETIC response matching the actual mock KIID. The old recovery
+        // snapshot named unrelated footprints and is not child inventory.
+        let snapshot_kiid =
+            kiapi::board::types::FootprintInstance::decode(footprints_before[0].value.as_slice())
+                .unwrap()
+                .id
+                .unwrap()
+                .value;
 
         let server = crate::tools::pcb_board::board_mock::spawn_kicad_holding_board(
             &board,
@@ -4434,10 +4490,9 @@ mod tests {
                     return Some(konnect_ipc::builders::pack_any(
                         &kiapi::common::commands::SavedDocumentResponse {
                             document: request.document,
-                            contents: include_str!(
-                                "../../tests/fixtures/specctra_two_resistors.kicad_pcb"
-                            )
-                            .into(),
+                            contents: format!(
+                                "(kicad_pcb (footprint \"Resistor_SMD:R_0402\" (uuid \"{snapshot_kiid}\")))"
+                            ),
                         },
                         "kiapi.common.commands.SavedDocumentResponse",
                     ));
