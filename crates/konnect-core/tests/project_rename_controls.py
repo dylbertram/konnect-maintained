@@ -60,6 +60,14 @@ CONTROLS = {
     "old-owner-checks-disabled": MODULE + "old_project_and_design_owners_refuse_before_any_move",
     "exclusive-move-replaced":
         MODULE + "concurrent_new_target_and_recreated_old_source_survive_without_rollback",
+    "plain-refusal-envelope-disabled":
+        MODULE + "exact_live_board_refuses_and_unrelated_live_board_is_untouched",
+    "late-project-lock-wording-disabled":
+        MODULE + "late_project_lock_reports_partial_with_the_verified_project_rewrite",
+}
+ASSERTION_MARKERS = {
+    "plain-refusal-envelope-disabled": "designated envelope assertion",
+    "late-project-lock-wording-disabled": "designated wording assertion",
 }
 MAX_LOG = 16 * 1024 * 1024
 
@@ -126,6 +134,17 @@ def variant(original, name):
         source, count = re.subn(r"(?m)^    use rustix::fs::\{[^\n]+\};\n", "", source)
         if count != 1:
             raise RuntimeError("expected one now-unused rustix import")
+    elif name == "plain-refusal-envelope-disabled":
+        source = marked(source, "RENAME_REFUSAL_NORMALIZATION",
+            "        let mut body = match serde_json::from_str::<serde_json::Value>(text) {\n"
+            "            Ok(body) => body,\n"
+            "            Err(_) => return CallToolResult {\n"
+            "                content: vec![crate::mcp::protocol::ToolContent::Text { text: text.clone() }],\n"
+            "                is_error: was_error,\n"
+            "            },\n"
+            "        };\n")
+    elif name == "late-project-lock-wording-disabled":
+        source = marked(source, "RENAME_PROJECT_LOCK_WORDING", "")
     else:
         raise RuntimeError(name)
     changed = source.encode()
@@ -155,13 +174,16 @@ def stop_group(process):
             time.sleep(0.05)
 
 
-def run(command, label, output, deadline, per_command, expected_test=None, failure=False):
+def run(command, label, output, deadline, per_command, expected_test=None, failure=False,
+        assertion_marker="designated outcome assertion"):
     budget = min(per_command, deadline - time.monotonic())
     if budget <= 0:
         raise RuntimeError("phase budget exhausted")
     log = output / (label + ".log")
     audit = {"command": command, "expected_test": expected_test,
-             "expected_failure": failure, "group_reaped": False}
+             "expected_failure": failure,
+             "expected_assertion_marker": assertion_marker if failure else None,
+             "group_reaped": False}
     process = None
     cleaned = False
     try:
@@ -200,7 +222,7 @@ def run(command, label, output, deadline, per_command, expected_test=None, failu
                 or process.returncode != (101 if failure else 0)):
                 raise RuntimeError(f"{label}: exact named assertion outcome was not observed")
             if failure and not re.search(
-                r"assertion [^\n]*failed: designated outcome assertion:", text
+                r"assertion [^\n]*failed: " + re.escape(assertion_marker) + ":", text
             ):
                 raise RuntimeError(f"{label}: unrelated panic is not a caught control")
         elif "--no-run" in command:
@@ -290,7 +312,8 @@ def main():
                     output, deadline, args.command_timeout)
                 run(cargo + [CONTROLS[name], "--", "--exact", "--test-threads=1"],
                     name, output, deadline, args.command_timeout,
-                    expected_test=CONTROLS[name], failure=True)
+                    expected_test=CONTROLS[name], failure=True,
+                    assertion_marker=ASSERTION_MARKERS.get(name, "designated outcome assertion"))
                 if (ROOT / SOURCE).read_bytes() != changes[name]:
                     raise RuntimeError("control source changed during execution")
             finally:

@@ -17,7 +17,8 @@ const ROOT: &str = include_str!("../../tests/fixtures/multichannel_mixer.kicad_s
 const CHILD: &str = include_str!("../../tests/fixtures/multichannel_channel_strip.kicad_sch");
 const PRO: &str = include_str!("../../tests/fixtures/multichannel_mixer.kicad_pro");
 const BOARD: &str = include_str!("../../tests/fixtures/specctra_two_resistors.kicad_pcb");
-const PRL: &str = r#"{"name":"multichannel_mixer","file":"multichannel_mixer.kicad_prl","unrelated":"keep-A"}"#;
+const PRL: &str =
+    r#"{"name":"multichannel_mixer","file":"multichannel_mixer.kicad_prl","unrelated":"keep-A"}"#;
 
 type Action = Box<dyn FnOnce() -> Option<SexpError>>;
 
@@ -36,7 +37,10 @@ struct ArmedHook(Rc<Cell<bool>>);
 
 impl ArmedHook {
     fn assert_fired(&self) {
-        assert!(self.0.get(), "the designated interleaving hook was not consumed");
+        assert!(
+            self.0.get(),
+            "the designated interleaving hook was not consumed"
+        );
     }
 }
 
@@ -46,12 +50,19 @@ impl Drop for ArmedHook {
     }
 }
 
-fn arm(stage: &'static str, path: &Path, action: impl FnOnce() -> Option<SexpError> + 'static) -> ArmedHook {
+fn arm(
+    stage: &'static str,
+    path: &Path,
+    action: impl FnOnce() -> Option<SexpError> + 'static,
+) -> ArmedHook {
     let fired = Rc::new(Cell::new(false));
     HOOK.with(|slot| {
         assert!(slot.borrow().is_none(), "previous hook was not cleared");
         *slot.borrow_mut() = Some(Hook {
-            stage, path: path.to_owned(), action: Box::new(action), fired: fired.clone(),
+            stage,
+            path: path.to_owned(),
+            action: Box::new(action),
+            fired: fired.clone(),
         });
     });
     ArmedHook(fired)
@@ -60,7 +71,10 @@ fn arm(stage: &'static str, path: &Path, action: impl FnOnce() -> Option<SexpErr
 fn take(stage: &str, path: &Path) -> Option<Action> {
     HOOK.with(|slot| {
         let mut slot = slot.borrow_mut();
-        if slot.as_ref().is_some_and(|hook| hook.stage == stage && hook.path == path) {
+        if slot
+            .as_ref()
+            .is_some_and(|hook| hook.stage == stage && hook.path == path)
+        {
             let hook = slot.take().unwrap();
             hook.fired.set(true);
             Some(hook.action)
@@ -72,7 +86,10 @@ fn take(stage: &str, path: &Path) -> Option<Action> {
 
 pub(super) fn fire(stage: &str, path: &Path) {
     if let Some(action) = take(stage, path) {
-        assert!(action().is_none(), "prewrite hook cannot return a writer error");
+        assert!(
+            action().is_none(),
+            "prewrite hook cannot return a writer error"
+        );
     }
 }
 
@@ -103,8 +120,10 @@ impl Fixture {
         std::fs::create_dir(&dir).unwrap();
         let dir = dir.canonicalize().unwrap();
         for (extension, bytes) in [
-            ("kicad_pro", PRO), ("kicad_sch", ROOT),
-            ("kicad_pcb", BOARD), ("kicad_prl", PRL),
+            ("kicad_pro", PRO),
+            ("kicad_sch", ROOT),
+            ("kicad_pcb", BOARD),
+            ("kicad_prl", PRL),
         ] {
             std::fs::write(dir.join(format!("{OLD}.{extension}")), bytes).unwrap();
         }
@@ -127,10 +146,16 @@ impl Fixture {
 
 async fn api(address: &str) -> McpHandler {
     McpHandler::new(ServerConfig {
-        kicad_cli: String::new(), kicad_binary: String::new(),
-        ipc_address: address.to_owned(), project_dir: None, jlcpcb_db_path: None,
-        auto_load_toolsets: false, eager_toolsets: true,
-    }).await.unwrap()
+        kicad_cli: String::new(),
+        kicad_binary: String::new(),
+        ipc_address: address.to_owned(),
+        project_dir: None,
+        jlcpcb_db_path: None,
+        auto_load_toolsets: false,
+        eager_toolsets: true,
+    })
+    .await
+    .unwrap()
 }
 
 async fn call(api: &McpHandler, fixture: &Fixture, options: Value) -> CallToolResult {
@@ -138,10 +163,13 @@ async fn call(api: &McpHandler, fixture: &Fixture, options: Value) -> CallToolRe
     for (key, value) in options.as_object().unwrap() {
         args[key] = value.clone();
     }
-    let response = api.handle_message(json!({
-        "jsonrpc": "2.0", "id": 851, "method": "tools/call",
-        "params": {"name": "rename_project", "arguments": args},
-    })).await.unwrap();
+    let response = api
+        .handle_message(json!({
+            "jsonrpc": "2.0", "id": 851, "method": "tools/call",
+            "params": {"name": "rename_project", "arguments": args},
+        }))
+        .await
+        .unwrap();
     assert!(response.error.is_none(), "{response:?}");
     serde_json::from_value(response.result.unwrap()).unwrap()
 }
@@ -153,9 +181,30 @@ fn body(result: &CallToolResult) -> Value {
     serde_json::from_str(text).unwrap()
 }
 
+fn assert_refusal_envelope(result: &CallToolResult) -> Value {
+    let parsed = result.content.first().and_then(|content| match content {
+        ToolContent::Text { text } => serde_json::from_str::<Value>(text).ok(),
+        _ => None,
+    });
+    assert!(
+        parsed.as_ref().is_some_and(Value::is_object),
+        "assertion failed: designated envelope assertion: refusal must be JSON before inspecting accounting"
+    );
+    let body = parsed.unwrap();
+    let message_present = body["message"].as_str().is_some_and(|text| !text.is_empty());
+    assert!(
+        result.is_error && message_present,
+        "assertion failed: designated envelope assertion: error flag and original refusal must survive: {body}"
+    );
+    body
+}
+
 fn assert_status(result: &CallToolResult, status: &str) -> Value {
     let body = body(result);
-    assert_eq!(body["outcome"]["status"], status, "designated outcome assertion: {body}");
+    assert_eq!(
+        body["outcome"]["status"], status,
+        "designated outcome assertion: {body}"
+    );
     assert_eq!(result.is_error, status != "complete", "{body}");
     body
 }
@@ -176,9 +225,15 @@ fn assert_late_native_move_failure(result: &CallToolResult) -> Value {
 
 fn unchanged(f: &Fixture) {
     for (extension, expected) in [
-        ("kicad_pro", PRO), ("kicad_sch", ROOT), ("kicad_pcb", BOARD), ("kicad_prl", PRL),
+        ("kicad_pro", PRO),
+        ("kicad_sch", ROOT),
+        ("kicad_pcb", BOARD),
+        ("kicad_prl", PRL),
     ] {
-        assert_eq!(std::fs::read(f.old(extension)).unwrap(), expected.as_bytes());
+        assert_eq!(
+            std::fs::read(f.old(extension)).unwrap(),
+            expected.as_bytes()
+        );
         assert!(!f.new_path(extension).exists());
     }
     assert_eq!(std::fs::read(f.child()).unwrap(), CHILD.as_bytes());
@@ -194,18 +249,49 @@ async fn clean_rename_changes_only_independently_enumerated_reference_bytes() {
     let child_keys = CHILD.matches("(project \"multichannel_mixer\"").count();
     assert_eq!((root_keys, child_keys), (29, 36));
     // These byte oracles never call the production transformer.
-    assert_eq!(std::fs::read(f.new_path("kicad_sch")).unwrap(),
-        ROOT.replace("(project \"multichannel_mixer\"", "(project \"guarded_rename\"").as_bytes());
-    assert_eq!(std::fs::read(f.child()).unwrap(),
-        CHILD.replace("(project \"multichannel_mixer\"", "(project \"guarded_rename\"").as_bytes());
-    assert_eq!(std::fs::read(f.new_path("kicad_pro")).unwrap(),
-        PRO.replace("\"multichannel_mixer.kicad_pro\"", "\"guarded_rename.kicad_pro\"")
-            .replace("\"multichannel_mixer\"", "\"guarded_rename\"").as_bytes());
-    assert_eq!(std::fs::read(f.new_path("kicad_prl")).unwrap(),
-        br#"{"name":"guarded_rename","file":"guarded_rename.kicad_prl","unrelated":"keep-A"}"#.as_slice());
-    assert_eq!(std::fs::read(f.new_path("kicad_pcb")).unwrap(), BOARD.as_bytes());
+    assert_eq!(
+        std::fs::read(f.new_path("kicad_sch")).unwrap(),
+        ROOT.replace(
+            "(project \"multichannel_mixer\"",
+            "(project \"guarded_rename\""
+        )
+        .as_bytes()
+    );
+    assert_eq!(
+        std::fs::read(f.child()).unwrap(),
+        CHILD
+            .replace(
+                "(project \"multichannel_mixer\"",
+                "(project \"guarded_rename\""
+            )
+            .as_bytes()
+    );
+    assert_eq!(
+        std::fs::read(f.new_path("kicad_pro")).unwrap(),
+        PRO.replace(
+            "\"multichannel_mixer.kicad_pro\"",
+            "\"guarded_rename.kicad_pro\""
+        )
+        .replace("\"multichannel_mixer\"", "\"guarded_rename\"")
+        .as_bytes()
+    );
+    assert_eq!(
+        std::fs::read(f.new_path("kicad_prl")).unwrap(),
+        br#"{"name":"guarded_rename","file":"guarded_rename.kicad_prl","unrelated":"keep-A"}"#
+            .as_slice()
+    );
+    assert_eq!(
+        std::fs::read(f.new_path("kicad_pcb")).unwrap(),
+        BOARD.as_bytes()
+    );
     assert_eq!(body["applied"]["moved_files"].as_array().unwrap().len(), 4);
-    assert_eq!(body["applied"]["verified_rewrites"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        body["applied"]["verified_rewrites"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
     for extension in PROJECT_EXTS {
         assert!(!f.old(extension).exists());
     }
@@ -215,15 +301,37 @@ async fn clean_rename_changes_only_independently_enumerated_reference_bytes() {
 async fn original_full_snapshots_reject_root_child_project_and_prl_interposed_saves() {
     let api = api("").await;
     for (extension, before, newer, completed) in [
-        ("kicad_sch", ROOT, ROOT.replacen("(paper \"A4\")", "(paper \"A3\")", 1), 1),
-        ("child", CHILD, CHILD.replacen("(paper \"A4\")", "(paper \"A3\")", 1), 3),
-        ("kicad_pro", PRO, PRO.replacen("\"version\": 1", "\"version\": 2", 1), 0),
+        (
+            "kicad_sch",
+            ROOT,
+            ROOT.replacen("(paper \"A4\")", "(paper \"A3\")", 1),
+            1,
+        ),
+        (
+            "child",
+            CHILD,
+            CHILD.replacen("(paper \"A4\")", "(paper \"A3\")", 1),
+            3,
+        ),
+        (
+            "kicad_pro",
+            PRO,
+            PRO.replacen("\"version\": 1", "\"version\": 2", 1),
+            0,
+        ),
         ("kicad_prl", PRL, PRL.replace("keep-A", "keep-B"), 2),
     ] {
-        assert_ne!(newer, before, "synthetic same-length edit anchor is missing");
+        assert_ne!(
+            newer, before,
+            "synthetic same-length edit anchor is missing"
+        );
         assert_eq!(newer.len(), before.len());
         let f = Fixture::new();
-        let path = if extension == "child" { f.child() } else { f.new_path(extension) };
+        let path = if extension == "child" {
+            f.child()
+        } else {
+            f.new_path(extension)
+        };
         let destination = path.clone();
         let saved = newer.clone();
         let hook = arm("before_rewrite", &path, move || {
@@ -233,11 +341,24 @@ async fn original_full_snapshots_reject_root_child_project_and_prl_interposed_sa
         let result = call(&api, &f, json!({})).await;
         hook.assert_fired();
         let body = assert_status(&result, "partial");
-        assert_eq!(body["error"]["kind"], "conflict", "designated guard assertion: {body}");
+        assert_eq!(
+            body["error"]["kind"], "conflict",
+            "designated guard assertion: {body}"
+        );
         assert_eq!(body["error"]["paths"], json!([path]));
-        assert_eq!(std::fs::read(&path).unwrap(), newer.as_bytes(), "newer bytes must survive");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            newer.as_bytes(),
+            "newer bytes must survive"
+        );
         assert_eq!(body["applied"]["moved_files"].as_array().unwrap().len(), 4);
-        assert_eq!(body["applied"]["verified_rewrites"].as_array().unwrap().len(), completed);
+        assert_eq!(
+            body["applied"]["verified_rewrites"]
+                .as_array()
+                .unwrap()
+                .len(),
+            completed
+        );
         assert_eq!(body["outcome"]["retry"]["safe"], false);
     }
 }
@@ -258,7 +379,10 @@ async fn pre_move_save_is_a_clean_refusal_without_filename_changes() {
     hook.assert_fired();
     let body = assert_status(&result, "failed");
     assert_eq!(body["error"]["kind"], "conflict");
-    assert!(body["applied"]["moved_files"].as_array().unwrap().is_empty());
+    assert!(body["applied"]["moved_files"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     assert_eq!(std::fs::read(path).unwrap(), newer.as_bytes());
     assert!(!f.new_path("kicad_pro").exists());
     assert_eq!(std::fs::read(f.old("kicad_sch")).unwrap(), ROOT.as_bytes());
@@ -269,7 +393,11 @@ async fn old_project_and_design_owners_refuse_before_any_move() {
     let api = api("").await;
     for extension in ["kicad_pro", "kicad_sch", "kicad_pcb", "child"] {
         let f = Fixture::new();
-        let path = if extension == "child" { f.child() } else { f.old(extension) };
+        let path = if extension == "child" {
+            f.child()
+        } else {
+            f.old(extension)
+        };
         let lock = if extension == "kicad_pro" {
             konnect_sexp::writer::kicad_project_lock_path(&path).unwrap()
         } else {
@@ -277,7 +405,12 @@ async fn old_project_and_design_owners_refuse_before_any_move() {
         };
         std::fs::write(&lock, "synthetic owner, not proof of freshness").unwrap();
         let result = call(&api, &f, json!({})).await;
-        assert_status(&result, "failed");
+        let body = assert_status(&result, "failed");
+        if extension == "kicad_pro" {
+            assert_eq!(body["error"]["kind"], "unsafe_file_fallback");
+            assert_eq!(body["error"]["path"], json!(path));
+            assert_eq!(body["error"]["reason"], "kicad_project_lock_present");
+        }
         unchanged(&f);
         assert!(lock.exists());
     }
@@ -288,7 +421,21 @@ async fn exact_live_board_refuses_and_unrelated_live_board_is_untouched() {
     let f = Fixture::new();
     let mock = board_mock::spawn_kicad_holding_board(&f.old("kicad_pcb"), |_| None);
     let result = call(&api(mock.address()).await, &f, json!({})).await;
+    let envelope = assert_refusal_envelope(&result);
+    assert_eq!(envelope["error"]["kind"], "handler_error");
+    assert!(envelope["message"]
+        .as_str()
+        .unwrap()
+        .contains("currently holds this board open"));
     assert_status(&result, "failed");
+    assert_eq!(envelope["outcome"]["completed"], 0);
+    assert_eq!(envelope["outcome"]["failed"], 1);
+    assert_eq!(envelope["applied"]["moved_files"], json!([]));
+    assert_eq!(envelope["applied"]["verified_rewrites"], json!([]));
+    assert_eq!(envelope["outcome"]["retry"]["safe"], true);
+    for entry in envelope["applied"]["current_paths"].as_array().unwrap() {
+        assert_eq!(entry["source"], entry["current_path"]);
+    }
     unchanged(&f);
     drop(mock);
 
@@ -302,7 +449,10 @@ async fn exact_live_board_refuses_and_unrelated_live_board_is_untouched() {
 #[tokio::test]
 async fn pending_journals_are_refused_without_recovery_or_moves() {
     let api = api("").await;
-    for content in ["not valid JSON", r#"{"version":1,"id":"pending","entries":[]}"#] {
+    for content in [
+        "not valid JSON",
+        r#"{"version":1,"id":"pending","entries":[]}"#,
+    ] {
         let f = Fixture::new();
         let path = f.dir.join(".konnect-transaction-pending.json");
         std::fs::write(&path, content).unwrap();
@@ -320,7 +470,11 @@ async fn late_new_or_old_design_lock_reports_partial_without_rewriting_the_locke
     for old_lock in [false, true] {
         let f = Fixture::new();
         let path = f.new_path("kicad_sch");
-        let locked_path = if old_lock { f.old("kicad_sch") } else { path.clone() };
+        let locked_path = if old_lock {
+            f.old("kicad_sch")
+        } else {
+            path.clone()
+        };
         let lock = konnect_sexp::writer::kicad_editor_lock_path(&locked_path).unwrap();
         let hook = arm("before_rewrite", &path, move || {
             std::fs::write(lock, "synthetic late lock").unwrap();
@@ -331,7 +485,13 @@ async fn late_new_or_old_design_lock_reports_partial_without_rewriting_the_locke
         let body = assert_status(&result, "partial");
         assert_eq!(body["error"]["kind"], "conflict");
         assert_eq!(std::fs::read(path).unwrap(), ROOT.as_bytes());
-        assert_eq!(body["applied"]["verified_rewrites"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            body["applied"]["verified_rewrites"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
 
@@ -349,7 +509,21 @@ async fn late_project_lock_reports_partial_with_the_verified_project_rewrite() {
     hook.assert_fired();
     let body = assert_status(&result, "partial");
     assert_eq!(body["error"]["kind"], "unsafe_file_fallback");
-    assert_eq!(body["applied"]["verified_rewrites"].as_array().unwrap().len(), 1);
+    assert_eq!(body["error"]["path"], json!(project));
+    assert_eq!(body["error"]["reason"], "kicad_project_lock_present");
+    let message = body["message"].as_str().unwrap();
+    assert!(
+        !message.contains("Konnect did not modify the project file"),
+        "assertion failed: designated wording assertion: late ownership refusal must not deny verified earlier work: {body}"
+    );
+    assert!(message.contains("earlier completed rename steps remain applied"));
+    assert_eq!(
+        body["applied"]["verified_rewrites"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(std::fs::read(path).unwrap(), ROOT.as_bytes());
 }
 
@@ -377,13 +551,24 @@ async fn concurrent_new_target_and_recreated_old_source_survive_without_rollback
     hook.assert_fired();
     let body = assert_status(&result, "partial");
     assert_eq!(body["error"]["kind"], "conflict");
-    assert_eq!(std::fs::read_to_string(f.old("kicad_pro")).unwrap(),
-        "recreated old project by another writer");
-    assert_eq!(std::fs::read_to_string(to).unwrap(), "concurrent target must survive");
-    assert_eq!(std::fs::read(f.new_path("kicad_pro")).unwrap(), PRO.as_bytes());
+    assert_eq!(
+        std::fs::read_to_string(f.old("kicad_pro")).unwrap(),
+        "recreated old project by another writer"
+    );
+    assert_eq!(
+        std::fs::read_to_string(to).unwrap(),
+        "concurrent target must survive"
+    );
+    assert_eq!(
+        std::fs::read(f.new_path("kicad_pro")).unwrap(),
+        PRO.as_bytes()
+    );
     assert_eq!(std::fs::read(f.old("kicad_sch")).unwrap(), ROOT.as_bytes());
     assert_eq!(body["applied"]["moved_files"].as_array().unwrap().len(), 1);
-    assert!(body["applied"]["verified_rewrites"].as_array().unwrap().is_empty());
+    assert!(body["applied"]["verified_rewrites"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -398,25 +583,41 @@ async fn first_move_collision_is_clean_and_preserves_the_new_target() {
     let result = call(&api("").await, &f, json!({})).await;
     hook.assert_fired();
     let body = assert_status(&result, "failed");
-    assert!(body["applied"]["moved_files"].as_array().unwrap().is_empty());
-    assert_eq!(std::fs::read_to_string(to).unwrap(), "concurrent first target");
+    assert!(body["applied"]["moved_files"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        std::fs::read_to_string(to).unwrap(),
+        "concurrent first target"
+    );
     assert_eq!(std::fs::read(f.old("kicad_pro")).unwrap(), PRO.as_bytes());
 }
 
 #[tokio::test]
 async fn postwrite_mismatch_and_io_are_uncertain_and_never_clean_refusals() {
     let api = api("").await;
-    for mode in ["readback_mismatch", "readback_io", "writer_conflict", "writer_io"] {
+    for mode in [
+        "readback_mismatch",
+        "readback_io",
+        "writer_conflict",
+        "writer_io",
+    ] {
         let f = Fixture::new();
         let path = f.new_path("kicad_sch");
         let destination = path.clone();
-        let newer = ROOT.replace("(project \"multichannel_mixer\"", "(project \"guarded_rename\"")
+        let newer = ROOT
+            .replace(
+                "(project \"multichannel_mixer\"",
+                "(project \"guarded_rename\"",
+            )
             .replacen("(paper \"A4\")", "(paper \"A3\")", 1);
         let saved = newer.clone();
         let hook = arm("after_write", &path, move || {
             match mode {
                 "readback_io" | "writer_io" => {
-                    std::fs::rename(&destination, destination.with_extension("unobserved")).unwrap();
+                    std::fs::rename(&destination, destination.with_extension("unobserved"))
+                        .unwrap();
                 }
                 _ => std::fs::write(&destination, saved).unwrap(),
             }
@@ -429,11 +630,19 @@ async fn postwrite_mismatch_and_io_are_uncertain_and_never_clean_refusals() {
         let result = call(&api, &f, json!({})).await;
         hook.assert_fired();
         let body = assert_status(&result, "uncertain");
-        assert_eq!(body["error"]["kind"], "mutation_outcome_uncertain",
-            "designated uncertain assertion: {body}");
+        assert_eq!(
+            body["error"]["kind"], "mutation_outcome_uncertain",
+            "designated uncertain assertion: {body}"
+        );
         assert_eq!(body["outcome"]["retry"]["safe"], false);
         assert_eq!(body["applied"]["moved_files"].as_array().unwrap().len(), 4);
-        assert_eq!(body["applied"]["verified_rewrites"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            body["applied"]["verified_rewrites"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         if mode.ends_with("io") {
             assert!(!path.exists());
             assert!(path.with_extension("unobserved").exists());
@@ -460,9 +669,21 @@ async fn backup_collision_reports_partial_and_never_claims_a_backup_move() {
     hook.assert_fired();
     let body = assert_late_native_move_failure(&result);
     assert!(body["applied"]["backup_move"].is_null());
-    assert_eq!(std::fs::read_to_string(source.join("keep.txt")).unwrap(), "original backup");
-    assert_eq!(std::fs::read_to_string(target.join("keep.txt")).unwrap(), "other backup");
-    assert_eq!(body["applied"]["verified_rewrites"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        std::fs::read_to_string(source.join("keep.txt")).unwrap(),
+        "original backup"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("keep.txt")).unwrap(),
+        "other backup"
+    );
+    assert_eq!(
+        body["applied"]["verified_rewrites"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
 }
 
 #[tokio::test]
@@ -482,7 +703,10 @@ async fn late_directory_collision_keeps_completed_backup_and_project_moves() {
     assert!(body["applied"]["backup_move"].is_object());
     assert!(body["applied"]["directory_move"].is_null());
     assert!(f.dir.join(format!("{NEW}-backups")).is_dir());
-    assert_eq!(std::fs::read_to_string(target.join("foreign")).unwrap(), "preserve");
+    assert_eq!(
+        std::fs::read_to_string(target.join("foreign")).unwrap(),
+        "preserve"
+    );
     assert!(f.new_path("kicad_sch").is_file());
 }
 
@@ -518,12 +742,18 @@ async fn late_move_io_failure_reports_uncertain_with_known_applied_work() {
         assert!(body["applied"]["unverified_move_attempt"].is_object());
         let moved = body["applied"]["moved_files"].as_array().unwrap().len();
         assert_eq!(moved, if backup_phase { 4 } else { 1 });
-        assert_eq!(std::fs::read(f.new_path("kicad_pro")).unwrap(),
+        assert_eq!(
+            std::fs::read(f.new_path("kicad_pro")).unwrap(),
             if backup_phase {
-                PRO.replace("\"multichannel_mixer.kicad_pro\"", "\"guarded_rename.kicad_pro\"").into_bytes()
+                PRO.replace(
+                    "\"multichannel_mixer.kicad_pro\"",
+                    "\"guarded_rename.kicad_pro\"",
+                )
+                .into_bytes()
             } else {
                 PRO.as_bytes().to_vec()
-            });
+            }
+        );
     }
 }
 
@@ -572,7 +802,11 @@ async fn final_directory_readback_failure_is_uncertain_at_the_relocated_path() {
     let target = f.dir.parent().unwrap().join(NEW);
     let path = target.join(format!("{NEW}.kicad_sch"));
     let destination = path.clone();
-    let newer = ROOT.replace("(project \"multichannel_mixer\"", "(project \"guarded_rename\"")
+    let newer = ROOT
+        .replace(
+            "(project \"multichannel_mixer\"",
+            "(project \"guarded_rename\"",
+        )
         .replacen("(paper \"A4\")", "(paper \"A3\")", 1);
     let saved = newer.clone();
     let hook = arm("after_move", &target, move || {
@@ -584,7 +818,13 @@ async fn final_directory_readback_failure_is_uncertain_at_the_relocated_path() {
     let body = assert_status(&result, "uncertain");
     assert_eq!(body["error"]["path"], json!(path));
     assert!(body["applied"]["directory_move"].is_object());
-    assert_eq!(body["applied"]["verified_rewrites"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        body["applied"]["verified_rewrites"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
     assert_eq!(std::fs::read(path).unwrap(), newer.as_bytes());
 }
 
@@ -594,15 +834,29 @@ async fn dry_run_is_read_only_even_with_locks_and_pending_journals() {
     let lock = konnect_sexp::writer::kicad_project_lock_path(&f.old("kicad_pro")).unwrap();
     std::fs::write(lock, "owner").unwrap();
     std::fs::write(f.dir.join(".konnect-transaction-pending.json"), "pending").unwrap();
-    let mut before: Vec<_> = std::fs::read_dir(&f.dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+    let mut before: Vec<_> = std::fs::read_dir(&f.dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     before.sort();
-    let result = call(&api("").await, &f, json!({"dry_run": true, "rename_directory": true})).await;
+    let result = call(
+        &api("").await,
+        &f,
+        json!({"dry_run": true, "rename_directory": true}),
+    )
+    .await;
     assert!(!result.is_error, "{result:?}");
     assert_eq!(body(&result)["dry_run"], true);
-    assert!(body(&result)["content_rewrites"].as_array().unwrap().iter()
+    assert!(body(&result)["content_rewrites"]
+        .as_array()
+        .unwrap()
+        .iter()
         .any(|entry| entry["file"] == "multichannel_channel_strip.kicad_sch"));
     unchanged(&f);
-    let mut after: Vec<_> = std::fs::read_dir(&f.dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+    let mut after: Vec<_> = std::fs::read_dir(&f.dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     after.sort();
     assert_eq!(before, after);
 }
@@ -655,8 +909,15 @@ fn windows_exclusive_moves_reject_nul_and_accept_verbatim_unicode_paths() {
     let from = dir.join("源-source");
     let to = dir.join("目标-destination");
     std::fs::write(&from, "source").unwrap();
-    let nul = PathBuf::from(std::ffi::OsString::from_wide(&[b'x' as u16, 0, b'y' as u16]));
-    assert_eq!(move_no_replace(&from, &nul).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+    let nul = PathBuf::from(std::ffi::OsString::from_wide(&[
+        b'x' as u16,
+        0,
+        b'y' as u16,
+    ]));
+    assert_eq!(
+        move_no_replace(&from, &nul).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
     assert_eq!(std::fs::read_to_string(&from).unwrap(), "source");
     move_no_replace(&from, &to).unwrap();
     assert_eq!(std::fs::read_to_string(to).unwrap(), "source");

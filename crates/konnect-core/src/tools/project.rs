@@ -1367,16 +1367,22 @@ struct RenameProgress {
 
 impl RenameProgress {
     fn changed(&self) -> bool {
-        !self.files.is_empty() || !self.rewrites.is_empty() || self.backup.is_some()
+        !self.files.is_empty()
+            || !self.rewrites.is_empty()
+            || self.backup.is_some()
             || self.directory.is_some()
     }
 
     fn current_path(&self, path: &Path) -> PathBuf {
-        let path = self.files.iter().find(|(from, _)| from == path)
+        let path = self
+            .files
+            .iter()
+            .find(|(from, _)| from == path)
             .map_or(path, |(_, to)| to.as_path());
         match &self.directory {
-            Some((from, to)) if path.starts_with(from) =>
-                to.join(path.strip_prefix(from).expect("prefix checked")),
+            Some((from, to)) if path.starts_with(from) => {
+                to.join(path.strip_prefix(from).expect("prefix checked"))
+            }
             _ => path.to_path_buf(),
         }
     }
@@ -1401,7 +1407,10 @@ impl RenameProgress {
 
     fn move_report(&self, from: &Path, to: &Path) -> serde_json::Value {
         let mut report = self.path_report(to);
-        report.as_object_mut().expect("path report is an object").remove("source");
+        report
+            .as_object_mut()
+            .expect("path report is an object")
+            .remove("source");
         report["from"] = json!(from);
         report["to"] = json!(to);
         report
@@ -1439,29 +1448,67 @@ fn rename_outcome(
     target: &Path,
     status: crate::outcome::OutcomeStatus,
 ) -> CallToolResult {
+    let was_error = result.is_error;
     if let Some(crate::mcp::protocol::ToolContent::Text { text }) = result.content.first_mut() {
-        if let Ok(mut body) = serde_json::from_str::<serde_json::Value>(text) {
-            body["applied"] = progress.report(documents);
-            if status == crate::outcome::OutcomeStatus::Partial {
-                body["message"] = json!(format!(
-                    "Project rename stopped after partial work. No rollback was attempted. \
-                     Inspect applied.current_paths before continuing; do not repeat the whole request. {}",
-                    body["message"].as_str().unwrap_or_default()
-                ));
-            }
-            *text = body.to_string();
+        // RENAME_REFUSAL_NORMALIZATION_BEGIN
+        let mut body = serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .filter(serde_json::Value::is_object)
+            .unwrap_or_else(|| {
+                if was_error {
+                    json!({
+                        "message": text.as_str(),
+                        "error": ToolErrorKind::HandlerError { reason: text.clone() },
+                    })
+                } else {
+                    json!({"message": text.as_str()})
+                }
+            });
+        // RENAME_REFUSAL_NORMALIZATION_END
+        // Keep existing structured error fields. Only the rename wrapper
+        // corrects the shared helper's whole-operation no-change wording.
+        // RENAME_PROJECT_LOCK_WORDING_BEGIN
+        if matches!(
+            body.pointer("/error/reason").and_then(serde_json::Value::as_str),
+            Some("kicad_project_lock_present" | "kicad_project_lock_unreadable")
+        ) {
+            let detail = body["message"].as_str().unwrap_or_default();
+            let message = detail.replace(
+                "Konnect did not modify the project file.",
+                "This ownership check refused further work. Any earlier completed rename steps remain applied as reported.",
+            );
+            body["message"] = json!(message);
         }
+        // RENAME_PROJECT_LOCK_WORDING_END
+        body["applied"] = progress.report(documents);
+        if status == crate::outcome::OutcomeStatus::Partial {
+            body["message"] = json!(format!(
+                "Project rename stopped after partial work. No rollback was attempted. \
+                     Inspect applied.current_paths before continuing; do not repeat the whole request. {}",
+                body["message"].as_str().unwrap_or_default()
+            ));
+        }
+        *text = body.to_string();
     }
     let complete = usize::from(status == crate::outcome::OutcomeStatus::Complete);
-    crate::outcome::attach(result, crate::outcome::summary(
-        status, progress.current_path(target).display().to_string(),
-        "saved_file_readback", 1, complete, 1 - complete,
-        match status {
-            crate::outcome::OutcomeStatus::Complete => None,
-            crate::outcome::OutcomeStatus::Failed => Some(crate::outcome::retry_whole_request()),
-            _ => Some(crate::outcome::inspect_before_retry()),
-        },
-    ))
+    crate::outcome::attach(
+        result,
+        crate::outcome::summary(
+            status,
+            progress.current_path(target).display().to_string(),
+            "saved_file_readback",
+            1,
+            complete,
+            1 - complete,
+            match status {
+                crate::outcome::OutcomeStatus::Complete => None,
+                crate::outcome::OutcomeStatus::Failed => {
+                    Some(crate::outcome::retry_whole_request())
+                }
+                _ => Some(crate::outcome::inspect_before_retry()),
+            },
+        ),
+    )
 }
 
 fn rename_stopped(
@@ -1479,9 +1526,12 @@ fn rename_stopped(
 }
 
 fn rename_conflict(path: &Path, reason: impl std::fmt::Display) -> CallToolResult {
-    CallToolResult::error_kind(ToolErrorKind::Conflict {
-        paths: vec![path.display().to_string()],
-    }, format!("Project rename refused at '{}': {reason}", path.display()))
+    CallToolResult::error_kind(
+        ToolErrorKind::Conflict {
+            paths: vec![path.display().to_string()],
+        },
+        format!("Project rename refused at '{}': {reason}", path.display()),
+    )
 }
 
 fn rename_uncertain(
@@ -1490,21 +1540,38 @@ fn rename_uncertain(
     progress: &RenameProgress,
     documents: &[RenameDocument],
 ) -> CallToolResult {
-    rename_outcome(CallToolResult::error_kind(ToolErrorKind::MutationOutcomeUncertain {
-        operation: "rename_project".into(),
-        path: path.display().to_string(),
-        reason: reason.to_string(),
-    }, format!(
-        "Project rename persistence is uncertain at '{}'. Known applied work is listed, \
+    rename_outcome(
+        CallToolResult::error_kind(
+            ToolErrorKind::MutationOutcomeUncertain {
+                operation: "rename_project".into(),
+                path: path.display().to_string(),
+                reason: reason.to_string(),
+            },
+            format!(
+                "Project rename persistence is uncertain at '{}'. Known applied work is listed, \
          but the last attempt may also have changed state. Inspect files before continuing; \
-         do not blindly retry. {reason}", path.display()
-    )), progress, documents, path, crate::outcome::OutcomeStatus::Uncertain)
+         do not blindly retry. {reason}",
+                path.display()
+            ),
+        ),
+        progress,
+        documents,
+        path,
+        crate::outcome::OutcomeStatus::Uncertain,
+    )
 }
 
 fn rename_lock_error(error: SexpError) -> CallToolResult {
     match error {
-        SexpError::KiCadEditorLocked { path, inspection_error, .. } => {
-            if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("kicad_pcb")) {
+        SexpError::KiCadEditorLocked {
+            path,
+            inspection_error,
+            ..
+        } => {
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("kicad_pcb"))
+            {
                 CallToolResult::error_kind(ToolErrorKind::UnsafeFileFallback {
                     path: path.display().to_string(),
                     reason: if inspection_error.is_some() {
@@ -1524,19 +1591,26 @@ async fn rename_authority(
     project: &Path,
     documents: &[RenameDocument],
 ) -> anyhow::Result<Option<CallToolResult>> {
-    if let Some(refusal) = super::pcb_board::refuse_if_project_locked_by_kicad(
-        project, "project rename",
-    ) {
+    if let Some(refusal) =
+        super::pcb_board::refuse_if_project_locked_by_kicad(project, "project rename")
+    {
         return Ok(Some(refusal));
     }
     for doc in documents {
-        if let Err(error) = konnect_sexp::writer::ensure_kicad_design_document_is_closed(&doc.source) {
+        if let Err(error) =
+            konnect_sexp::writer::ensure_kicad_design_document_is_closed(&doc.source)
+        {
             return Ok(Some(rename_lock_error(error)));
         }
-        if doc.source.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("kicad_pcb")) {
-            if let Some(refusal) = super::pcb_board::refuse_if_board_open_in_kicad(
-                ctx, &doc.source, "project rename",
-            ).await? {
+        if doc
+            .source
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("kicad_pcb"))
+        {
+            if let Some(refusal) =
+                super::pcb_board::refuse_if_board_open_in_kicad(ctx, &doc.source, "project rename")
+                    .await?
+            {
                 return Ok(Some(refusal));
             }
         }
@@ -1552,8 +1626,10 @@ fn pending_rename_journal(dir: &Path) -> std::io::Result<Option<PathBuf>> {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with(".konnect-transaction-") && name.ends_with(".json")
-            && !name.ends_with(".abandoned.json") {
+        if name.starts_with(".konnect-transaction-")
+            && name.ends_with(".json")
+            && !name.ends_with(".abandoned.json")
+        {
             paths.push(entry.path());
         }
     }
@@ -1576,7 +1652,10 @@ fn move_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
     let wide = |path: &Path| -> std::io::Result<Vec<u16>> {
         let mut value: Vec<u16> = path.as_os_str().encode_wide().collect();
         if value.contains(&0) {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path contains NUL",
+            ));
         }
         value.push(0);
         Ok(value)
@@ -1595,8 +1674,10 @@ fn move_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn move_no_replace(_from: &Path, _to: &Path) -> std::io::Result<()> {
-    Err(std::io::Error::new(std::io::ErrorKind::Unsupported,
-        "no native exclusive-move implementation for this target"))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "no native exclusive-move implementation for this target",
+    ))
 }
 
 fn sync_rename_parent(path: &Path) -> std::io::Result<()> {
@@ -1620,20 +1701,35 @@ fn prepare_rename_documents(
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         if path.extension().is_some_and(|ext| ext == "kicad_sch")
-            && !paths.iter().any(|(source, _)| source == &path) {
+            && !paths.iter().any(|(source, _)| source == &path)
+        {
             children.push(path);
         }
     }
     children.sort();
     paths.extend(children.into_iter().map(|path| (path.clone(), path)));
-    paths.into_iter().map(|(source, target)| {
-        anyhow::ensure!(std::fs::symlink_metadata(&source)?.file_type().is_file(),
-            "rename source must be a regular file, not a symlink: {}", source.display());
-        let before = konnect_sexp::read_consistent(&source)?;
-        let sexp = source.extension().is_some_and(|ext| ext == "kicad_sch" || ext == "kicad_pcb");
-        let (after, hits) = rewrite_project_references(&before, old_name, new_name, sexp);
-        Ok(RenameDocument { source, target, before, after, hits })
-    }).collect()
+    paths
+        .into_iter()
+        .map(|(source, target)| {
+            anyhow::ensure!(
+                std::fs::symlink_metadata(&source)?.file_type().is_file(),
+                "rename source must be a regular file, not a symlink: {}",
+                source.display()
+            );
+            let before = konnect_sexp::read_consistent(&source)?;
+            let sexp = source
+                .extension()
+                .is_some_and(|ext| ext == "kicad_sch" || ext == "kicad_pcb");
+            let (after, hits) = rewrite_project_references(&before, old_name, new_name, sexp);
+            Ok(RenameDocument {
+                source,
+                target,
+                before,
+                after,
+                hits,
+            })
+        })
+        .collect()
 }
 
 async fn apply_project_rename(
@@ -1644,26 +1740,48 @@ async fn apply_project_rename(
     new_name: &str,
     rename_dir: bool,
 ) -> anyhow::Result<CallToolResult> {
-    let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir }.canonicalize()?;
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    }
+    .canonicalize()?;
     let project = dir.join(format!("{old_name}.kicad_pro"));
-    let planned: Vec<_> = planned.iter().map(|(from, to)| (
-        dir.join(from.file_name().expect("planned filename")),
-        dir.join(to.file_name().expect("planned filename")),
-    )).collect();
+    let planned: Vec<_> = planned
+        .iter()
+        .map(|(from, to)| {
+            (
+                dir.join(from.file_name().expect("planned filename")),
+                dir.join(to.file_name().expect("planned filename")),
+            )
+        })
+        .collect();
     let mut progress = RenameProgress::default();
     let documents = match prepare_rename_documents(&dir, &planned, old_name, new_name) {
         Ok(documents) => documents,
-        Err(error) => return Ok(rename_stopped(rename_conflict(&project, error),
-            &progress, &[], &project)),
+        Err(error) => {
+            return Ok(rename_stopped(
+                rename_conflict(&project, error),
+                &progress,
+                &[],
+                &project,
+            ))
+        }
     };
 
     #[cfg(test)]
     rename_revision_tests::fire("before_moves", &project);
     // Recheck after snapshot preparation, before moving even the first path.
     if let Some(journal) = pending_rename_journal(&dir)? {
-        return Ok(rename_stopped(rename_conflict(&journal,
-            "pending transaction; use konnect transaction status/recover before renaming"),
-            &progress, &documents, &project));
+        return Ok(rename_stopped(
+            rename_conflict(
+                &journal,
+                "pending transaction; use konnect transaction status/recover before renaming",
+            ),
+            &progress,
+            &documents,
+            &project,
+        ));
     }
     if let Some(refusal) = rename_authority(ctx, &project, &documents).await? {
         return Ok(rename_stopped(refusal, &progress, &documents, &project));
@@ -1671,9 +1789,17 @@ async fn apply_project_rename(
     for doc in &documents {
         match konnect_sexp::read_consistent(&doc.source) {
             Ok(current) if current == doc.before => {}
-            _ => return Ok(rename_stopped(rename_conflict(&doc.source,
-                "source cannot be read or no longer matches the prepared snapshot"),
-                &progress, &documents, &project)),
+            _ => {
+                return Ok(rename_stopped(
+                    rename_conflict(
+                        &doc.source,
+                        "source cannot be read or no longer matches the prepared snapshot",
+                    ),
+                    &progress,
+                    &documents,
+                    &project,
+                ))
+            }
         }
     }
     for (from, to) in &planned {
@@ -1681,16 +1807,26 @@ async fn apply_project_rename(
         rename_revision_tests::fire("before_move", to);
         // A refusal here may follow earlier successful filename moves.
         if let Err(error) = konnect_sexp::writer::ensure_kicad_design_document_is_closed(from) {
-            return Ok(rename_stopped(rename_lock_error(error), &progress, &documents, &project));
+            return Ok(rename_stopped(
+                rename_lock_error(error),
+                &progress,
+                &documents,
+                &project,
+            ));
         }
-        if let Some(refusal) = super::pcb_board::refuse_if_project_locked_by_kicad(
-            &project, "project rename",
-        ) {
+        if let Some(refusal) =
+            super::pcb_board::refuse_if_project_locked_by_kicad(&project, "project rename")
+        {
             return Ok(rename_stopped(refusal, &progress, &documents, &project));
         }
         if let Err(error) = move_no_replace(from, to) {
             if error.kind() == std::io::ErrorKind::AlreadyExists {
-                return Ok(rename_stopped(rename_conflict(to, error), &progress, &documents, &project));
+                return Ok(rename_stopped(
+                    rename_conflict(to, error),
+                    &progress,
+                    &documents,
+                    &project,
+                ));
             }
             progress.uncertain_move = Some((from.clone(), to.clone()));
             return Ok(rename_uncertain(to, error, &progress, &documents));
@@ -1706,17 +1842,34 @@ async fn apply_project_rename(
         let path = &doc.target;
         #[cfg(test)]
         rename_revision_tests::fire("before_rewrite", path);
-        if let Err(error) = konnect_sexp::writer::ensure_kicad_design_document_is_closed(&doc.source) {
-            return Ok(rename_stopped(rename_lock_error(error), &progress, &documents, &project));
+        if let Err(error) =
+            konnect_sexp::writer::ensure_kicad_design_document_is_closed(&doc.source)
+        {
+            return Ok(rename_stopped(
+                rename_lock_error(error),
+                &progress,
+                &documents,
+                &project,
+            ));
         }
         if let Err(error) = konnect_sexp::writer::ensure_kicad_design_document_is_closed(path) {
-            return Ok(rename_stopped(rename_lock_error(error), &progress, &documents, &project));
+            return Ok(rename_stopped(
+                rename_lock_error(error),
+                &progress,
+                &documents,
+                &project,
+            ));
         }
-        if let Some(refusal) = super::pcb_board::refuse_if_project_locked_by_kicad(
-            &project, "project rename",
-        ).or_else(|| super::pcb_board::refuse_if_project_locked_by_kicad(
-            &project.with_file_name(format!("{new_name}.kicad_pro")), "project rename",
-        )) {
+        if let Some(refusal) =
+            super::pcb_board::refuse_if_project_locked_by_kicad(&project, "project rename").or_else(
+                || {
+                    super::pcb_board::refuse_if_project_locked_by_kicad(
+                        &project.with_file_name(format!("{new_name}.kicad_pro")),
+                        "project rename",
+                    )
+                },
+            )
+        {
             return Ok(rename_stopped(refusal, &progress, &documents, &project));
         }
         let mut attempted = false;
@@ -1734,22 +1887,48 @@ async fn apply_project_rename(
         #[cfg(test)]
         let result = rename_revision_tests::after_write(path, result, attempted);
         match result {
-            Ok(false) => return Ok(rename_stopped(rename_conflict(path,
-                "file changed since the original snapshot; newer bytes were not replaced"),
-                &progress, &documents, &project)),
-            Err(error @ SexpError::KiCadEditorLocked { .. }) =>
-                return Ok(rename_stopped(rename_lock_error(error), &progress, &documents, &project)),
-            Err(error) if attempted =>
-                return Ok(rename_uncertain(path, error, &progress, &documents)),
-            Err(error) => return Ok(rename_stopped(rename_conflict(path, error),
-                &progress, &documents, &project)),
+            Ok(false) => {
+                return Ok(rename_stopped(
+                    rename_conflict(
+                        path,
+                        "file changed since the original snapshot; newer bytes were not replaced",
+                    ),
+                    &progress,
+                    &documents,
+                    &project,
+                ))
+            }
+            Err(error @ SexpError::KiCadEditorLocked { .. }) => {
+                return Ok(rename_stopped(
+                    rename_lock_error(error),
+                    &progress,
+                    &documents,
+                    &project,
+                ))
+            }
+            Err(error) if attempted => {
+                return Ok(rename_uncertain(path, error, &progress, &documents))
+            }
+            Err(error) => {
+                return Ok(rename_stopped(
+                    rename_conflict(path, error),
+                    &progress,
+                    &documents,
+                    &project,
+                ))
+            }
             Ok(true) => {}
         }
         match konnect_sexp::read_consistent(path) {
             Ok(saved) if saved == doc.after => {}
-            _ => return Ok(rename_uncertain(path,
-                "committed-file readback could not verify the intended bytes",
-                &progress, &documents)),
+            _ => {
+                return Ok(rename_uncertain(
+                    path,
+                    "committed-file readback could not verify the intended bytes",
+                    &progress,
+                    &documents,
+                ))
+            }
         }
         if doc.hits > 0 {
             progress.rewrites.push((path.clone(), doc.hits));
@@ -1759,7 +1938,11 @@ async fn apply_project_rename(
     let backup_from = dir.join(format!("{old_name}-backups"));
     let mut extra_moves = Vec::new();
     if backup_from.is_dir() {
-        extra_moves.push(("backup", backup_from, dir.join(format!("{new_name}-backups"))));
+        extra_moves.push((
+            "backup",
+            backup_from,
+            dir.join(format!("{new_name}-backups")),
+        ));
     }
     if rename_dir && dir.file_name().and_then(|name| name.to_str()) == Some(old_name) {
         if let Some(parent) = dir.parent() {
@@ -1771,7 +1954,12 @@ async fn apply_project_rename(
         rename_revision_tests::fire("before_move", &to);
         if let Err(error) = move_no_replace(&from, &to) {
             if error.kind() == std::io::ErrorKind::AlreadyExists {
-                return Ok(rename_stopped(rename_conflict(&to, error), &progress, &documents, &project));
+                return Ok(rename_stopped(
+                    rename_conflict(&to, error),
+                    &progress,
+                    &documents,
+                    &project,
+                ));
             }
             progress.uncertain_move = Some((from, to.clone()));
             return Ok(rename_uncertain(&to, error, &progress, &documents));
@@ -1792,8 +1980,12 @@ async fn apply_project_rename(
     for doc in &documents {
         let path = progress.current_path(&doc.source);
         if !konnect_sexp::read_consistent(&path).is_ok_and(|saved| saved == doc.after) {
-            return Ok(rename_uncertain(&path,
-                "final-path readback differs or could not be read", &progress, &documents));
+            return Ok(rename_uncertain(
+                &path,
+                "final-path readback differs or could not be read",
+                &progress,
+                &documents,
+            ));
         }
     }
     let result = CallToolResult::json(&json!({
@@ -1810,7 +2002,13 @@ async fn apply_project_rename(
             .and_then(|(_, to)| to.file_name()).and_then(|name| name.to_str()),
         "directory": progress.directory.as_ref().map(|(_, to)| to),
     }));
-    Ok(rename_outcome(result, &progress, &documents, &project, crate::outcome::OutcomeStatus::Complete))
+    Ok(rename_outcome(
+        result,
+        &progress,
+        &documents,
+        &project,
+        crate::outcome::OutcomeStatus::Complete,
+    ))
 }
 
 async fn handle_rename_project(
@@ -1879,14 +2077,23 @@ async fn handle_rename_project(
         planned_files.push((from, to));
     }
     if !collisions.is_empty() {
-        return Ok(rename_stopped(rename_conflict(Path::new(&collisions[0]), format!(
-            "Refusing to rename: these target files already exist: {}",
-            collisions.join(", ")
-        )), &RenameProgress::default(), &[], &pro_path));
+        return Ok(rename_stopped(
+            rename_conflict(
+                Path::new(&collisions[0]),
+                format!(
+                    "Refusing to rename: these target files already exist: {}",
+                    collisions.join(", ")
+                ),
+            ),
+            &RenameProgress::default(),
+            &[],
+            &pro_path,
+        ));
     }
 
     if !dry_run {
-        return apply_project_rename(ctx, &dir, &planned_files, &old_name, &new_name, rename_dir).await;
+        return apply_project_rename(ctx, &dir, &planned_files, &old_name, &new_name, rename_dir)
+            .await;
     }
 
     // Preserve the existing preview contract, including zero-hit entries.

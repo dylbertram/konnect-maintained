@@ -60,6 +60,13 @@ readback are `mutation_outcome_uncertain` with status `uncertain`. No whole
 request retry is marked safe after partial or uncertain work. Known prewrite
 KiCad-lock refusals remain refusals, not invented attempted writes.
 
+Plain-text helper refusals are normalized to JSON before attaching accounting.
+Their error flag and message survive; the existing plain-error `handler_error`
+classification becomes explicit. Existing structured error fields are retained.
+Project-lock wording is corrected inside the rename wrapper so a late refusal
+does not claim that an already verified project rewrite never happened. Shared
+helper behavior for other tools is unchanged.
+
 A backup destination collision now stops apply with reported partial work.
 It does not report an unperformed backup move. The optional containing-directory
 move follows the same rules. Dry-run retains the previous preview fields,
@@ -157,14 +164,15 @@ cargo test --workspace --locked --doc
 
 The control runner is Linux-only, offline, and owns its Cargo process groups,
 runtime limits and JSON audits. Each variant must compile first and fail one
-exact served test at `designated outcome assertion`, not at compilation, zero
-tests, timeouts or an unrelated panic. All exact positive names are checked
+exact served test at its designated outcome, envelope or wording assertion, not
+at compilation, zero tests, timeouts or an unrelated panic. All exact positive names are checked
 before mutation and again after finally restoring pinned bytes and modes.
 Only `project.rs` is mutated.
 
 Controls are `failing-before-stale-write`, `guard-removed`,
 `expected-refreshed`, `partial-hidden`, `uncertain-became-refusal`,
-`old-owner-checks-disabled` and `exclusive-move-replaced`.
+`old-owner-checks-disabled`, `exclusive-move-replaced`,
+`plain-refusal-envelope-disabled` and `late-project-lock-wording-disabled`.
 The failing-before case replays the original unconditional stale replacement
 at the consumed hook. It is explicitly not a whole-file baseline checkout.
 No control has been run by the child.
