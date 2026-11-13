@@ -1,0 +1,57 @@
+// ---- Text -------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct Text {
+    pub text: String,
+    pub at: At,
+    pub uuid: String,
+    pub effects: Option<Effects>,
+}
+
+impl Text {
+    pub fn new(text: impl Into<String>, x: f64, y: f64) -> Self {
+        Text {
+            text: text.into(),
+            at: At::new(x, y),
+            uuid: uuid::Uuid::new_v4().to_string(),
+            effects: None,
+        }
+    }
+
+    pub fn from_sexp(node: &SexpNode) -> Result<Self> {
+        let text = node
+            .value()
+            .ok_or(Error::MissingField("text content"))?
+            .to_owned();
+        let at = node
+            .find("at")
+            .and_then(At::from_sexp)
+            .ok_or(Error::MissingField("at"))?;
+        let uuid = node.get_value("uuid").unwrap_or("").to_owned();
+        let effects = node.find("effects").and_then(Effects::from_sexp);
+        Ok(Text {
+            text,
+            at,
+            uuid,
+            effects,
+        })
+    }
+
+    pub fn to_sexp(&self) -> SexpNode {
+        let mut c = vec![atom("text"), qstr(self.text.clone()), self.at.to_sexp()];
+        if let Some(e) = &self.effects {
+            c.push(e.to_sexp());
+        }
+        c.push(tagged("uuid", vec![qstr(self.uuid.clone())]));
+        SexpNode::List(c)
+    }
+
+    pub fn position(&self) -> (f64, f64) {
+        (self.at.x, self.at.y)
+    }
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        self.at.translate(dx, dy);
+    }
+}
+
+// ---- NoConnect --------------------------------------------------------------

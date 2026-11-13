@@ -3,6 +3,31 @@
 Konnect's tool schemas are public API. This file records intentional argument
 removals and the supported replacement workflow.
 
+## Unreleased: Rust schematic text retains simulation exclusion and unknown children
+
+`konnect_schematic_editor::Text` adds public fields
+`exclude_from_sim: Option<bool>` and `raw_sub_nodes: Vec<SexpNode>`.
+This intentionally breaks downstream exhaustive struct literals and destructuring.
+The source-break approach was explicitly selected for this fix.
+
+Constructor callers and existing field access keep working. `Text::new` keeps its
+signature and initializes the new fields to `None` and an empty vector. Existing
+exhaustive literals must add those fields, or switch to `Text::new`. Exhaustive
+destructures must bind the new fields or use `..`. This is not a purely additive,
+source-compatible Rust API change.
+
+The optional flag distinguishes `yes`, `no` and absence. `None` emits no flag;
+`Some(false)` emits `(exclude_from_sim no)`; `Some(true)` emits `yes`. Existing
+native flags are written before `at`. Losing `yes` can enable a text-based SPICE
+directive, so preserving only the default `no` case is insufficient.
+
+Unknown scalar and list arguments retain their contents and mutual order, but
+are replayed after UUID rather than in their original slots among modelled
+children. Exact byte preservation is tested for untouched text blocks in the
+native LF fixture, not for arbitrary layouts, CRLF input or whole schematics.
+No tool argument or response schema changes. See
+`docs/stabilization/TEXT_PRESERVATION.md` for evidence and remaining gates.
+
 ## Unreleased: Rust schematic properties retain KiCad's private flag
 
 `konnect_schematic_editor::Property` adds a public `private: bool` field.
