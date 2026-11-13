@@ -152,19 +152,19 @@ pub fn tools() -> Vec<ToolDef> {
         tool!(
             "batch_delete",
             "Delete multiple schematic items (wires, labels, junctions, components) by UUID \
-             or component reference designator — single file write.",
+             in `uuids` or component reference designator in `references`, in a single file write.",
             json!({
                 "type": "object",
                 "properties": {
                     "schematic": { "type": "string", "description": "Path to .kicad_sch file" },
                     "uuids": {
                         "type": "array",
-                        "description": "UUIDs of items to delete",
+                        "description": "UUIDs of items to delete. Pass component reference designators such as R1 in references, not uuids.",
                         "items": { "type": "string" }
                     },
                     "references": {
                         "type": "array",
-                        "description": "Component reference designators to delete",
+                        "description": "Component reference designators to delete, such as R1 or #PWR01. Pass item UUIDs in uuids.",
                         "items": { "type": "string" }
                     }
                 },
