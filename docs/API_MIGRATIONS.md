@@ -3,6 +3,21 @@
 Konnect's tool schemas are public API. This file records intentional argument
 removals and the supported replacement workflow.
 
+## Unreleased: stable schematic read identities
+
+`get_schematic_pin_locations` and `batch_get_schematic_pin_locations` now
+return `mirror_x` and `mirror_y` beside rotation on each unit and on the
+lowest-unit anchor. Pin coordinates and existing fields are unchanged.
+
+Every `list_schematic_labels` entry now includes the native `uuid`. Pass those
+UUIDs to `batch_delete` through `uuids` for selective bulk deletion. Existing
+label type names remain `NetLabel`, `GlobalLabel` and `HierarchicalLabel`.
+These fields are additive; this does not add reused-sheet instance-path targeting.
+
+`batch_delete` guidance now explicitly separates item UUIDs in `uuids` from
+component reference designators in `references`. Selector behavior is unchanged;
+references passed as UUIDs are not silently reinterpreted.
+
 ## Unreleased: saved-board writes refuse stale snapshots
 
 The file fallbacks for `set_board_size`, `add_layer`, `add_board_outline`,
@@ -21,6 +36,26 @@ IPC and KiCad sibling-lock authority checks remain in force. `add_layer`, which
 has no live IPC implementation, now also applies the existing open-board
 refusal before reading the saved board. Inputs and successful response fields
 are unchanged.
+
+## Unreleased: PCB netlist dispatch and front-view plots
+
+`export_netlist` now sends `format: "ipc"` and `"ipcd356"` with an explicit
+`.kicad_pcb` path to `kicad-cli pcb export ipcd356`. Unknown formats and
+non-string format values are refused before CLI execution.
+
+The existing `"kicad"` default remains, but a PCB path is refused with guidance
+to use `generate_netlist` with an explicit `.kicad_sch` path. Konnect never guesses
+a sibling schematic. Explicit schematic input to `export_netlist` still supports
+`"kicad"` through `sch export netlist`. These CLI exports read saved files, not
+unsaved editor state.
+
+`export_pdf` and `export_svg` now interpret omitted or empty `layers` as the front
+view, drawing `F.Cu`, `F.Mask`, `F.SilkS`, `Edge.Cuts` in that order, limited to
+layers declared by the saved board. The old "all visible layers" default was
+not supported by KiCad's CLI. A board declaring none of these layers is refused.
+Explicit lists retain their order. Both responses add `layers`. Non-array
+values, including `null`, and non-string entries are refused as `invalid_argument`
+instead of being silently discarded. Outputs remain single-file plots.
 
 ## Unreleased: native schematic DNP
 

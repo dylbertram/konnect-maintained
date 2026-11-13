@@ -79,6 +79,38 @@ pub(crate) fn standard_gerber_layers(board_source: &str) -> anyhow::Result<Vec<S
     Ok(layers)
 }
 
+/// Single-file plots draw bottom to top, not in the board's layer-table order.
+/// Read the same saved board the CLI will plot; do not infer editor visibility.
+fn front_view_layers(board_source: &str) -> anyhow::Result<Vec<String>> {
+    const FRONT_VIEW: [&str; 4] = ["F.Cu", "F.Mask", "F.SilkS", "Edge.Cuts"];
+    let board = konnect_sexp::parser::parse_sexp(board_source)?;
+    anyhow::ensure!(board.head() == Some("kicad_pcb"), "expected a KiCad PCB");
+    anyhow::ensure!(
+        board.find("layers").is_some(),
+        "board has no (layers) table"
+    );
+    let declared = konnect_sexp::layers::layers(&board);
+    let selected = FRONT_VIEW
+        .into_iter()
+        .filter(|name| declared.iter().any(|layer| layer.name == *name))
+        .map(String::from)
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !selected.is_empty(),
+        "board declares none of {}",
+        FRONT_VIEW.join(", ")
+    );
+    Ok(selected)
+}
+
+async fn default_front_view(board: &Path) -> anyhow::Result<Vec<String>> {
+    let source = tokio::fs::read_to_string(board)
+        .await
+        .with_context(|| format!("cannot read board {}", board.display()))?;
+    front_view_layers(&source)
+        .with_context(|| format!("cannot select front-view layers for {}", board.display()))
+}
+
 pub(crate) fn validate_position_values(
     format: &str,
     side: &str,
@@ -143,7 +175,7 @@ pub fn tools() -> Vec<ToolDef> {
                     "output": { "type": "string", "description": "Output PDF file path" },
                     "layers": {
                         "type": "array",
-                        "description": "Layer names to include (empty = all visible layers)",
+                        "description": "Exact layer names to plot on one page, in drawing order. Omit or pass [] for F.Cu, F.Mask, F.SilkS, Edge.Cuts in that order, limited to layers declared by the saved board.",
                         "items": { "type": "string" }
                     },
                     "black_and_white": { "type": "boolean", "description": "Render in black and white", "default": false }
@@ -162,7 +194,7 @@ pub fn tools() -> Vec<ToolDef> {
                     "output": { "type": "string", "description": "Output SVG file path" },
                     "layers": {
                         "type": "array",
-                        "description": "Layer names to include (empty = all visible layers)",
+                        "description": "Exact layer names to plot on one page, in drawing order. Omit or pass [] for F.Cu, F.Mask, F.SilkS, Edge.Cuts in that order, limited to layers declared by the saved board.",
                         "items": { "type": "string" }
                     },
                     "black_and_white": { "type": "boolean", "description": "Render in black and white", "default": false }
@@ -232,7 +264,9 @@ pub fn tools() -> Vec<ToolDef> {
         ),
         tool!(
             "export_netlist",
-            "Export the PCB netlist to a file in KiCAD or IPC-D-356 format.",
+            "Export a saved PCB's IPC-D-356 netlist with format 'ipc' or 'ipcd356'. \
+             KiCad-format netlists require an explicit schematic path; use generate_netlist. \
+             No sibling schematic is inferred and unsaved editor changes are not exported.",
             json!({
                 "type": "object",
                 "properties": {
@@ -240,7 +274,8 @@ pub fn tools() -> Vec<ToolDef> {
                     "output": { "type": "string", "description": "Output netlist file path" },
                     "format": {
                         "type": "string",
-                        "description": "Netlist format: 'kicad' or 'ipc' (IPC-D-356)",
+                        "enum": ["kicad", "ipc", "ipcd356"],
+                        "description": "'ipc' or 'ipcd356' exports a .kicad_pcb via pcb export ipcd356. 'kicad' requires an explicit .kicad_sch; PCB input is refused. Prefer generate_netlist for schematics.",
                         "default": "kicad"
                     }
                 },
@@ -489,15 +524,13 @@ async fn handle_export_pdf(
     let board = get_path(args, "board")?;
     let output = get_path(args, "output")?;
 
-    // Collect optional layer list
-    let layers: Vec<String> = args["layers"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut layers = match optional_string_array(args, "layers") {
+        Ok(layers) => layers,
+        Err(error) => return Ok(error),
+    };
+    if layers.is_empty() {
+        layers = default_front_view(&board).await?;
+    }
     let layer_refs: Vec<&str> = layers.iter().map(|s| s.as_str()).collect();
     let black_and_white = args["black_and_white"].as_bool().unwrap_or(false);
 
@@ -508,6 +541,7 @@ async fn handle_export_pdf(
         serde_json::to_string(&json!({
             "success": true,
             "output": output.to_str().unwrap_or(""),
+            "layers": layers,
             "black_and_white": black_and_white
         }))
         .unwrap(),
@@ -521,14 +555,13 @@ async fn handle_export_svg(
     let board = get_path(args, "board")?;
     let output = get_path(args, "output")?;
 
-    let layers: Vec<String> = args["layers"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut layers = match optional_string_array(args, "layers") {
+        Ok(layers) => layers,
+        Err(error) => return Ok(error),
+    };
+    if layers.is_empty() {
+        layers = default_front_view(&board).await?;
+    }
     let layer_refs: Vec<&str> = layers.iter().map(|s| s.as_str()).collect();
     let black_and_white = args["black_and_white"].as_bool().unwrap_or(false);
 
@@ -539,6 +572,7 @@ async fn handle_export_svg(
         serde_json::to_string(&json!({
             "success": true,
             "output": output.to_str().unwrap_or(""),
+            "layers": layers,
             "black_and_white": black_and_white
         }))
         .unwrap(),
@@ -615,12 +649,42 @@ async fn handle_export_netlist(
 ) -> anyhow::Result<CallToolResult> {
     let board = get_path(args, "board")?;
     let output = get_path(args, "output")?;
-    let format = args["format"].as_str().unwrap_or("kicad");
+    let format = match args.get("format") {
+        None => "kicad",
+        Some(value) => match value.as_str() {
+            Some(format @ ("kicad" | "ipc" | "ipcd356")) => format,
+            _ => {
+                return Ok(invalid_export_argument(
+                    "format",
+                    "must be 'kicad', 'ipc', or 'ipcd356'",
+                ));
+            }
+        },
+    };
 
     let cli = &ctx.config.kicad_cli;
-    // kicad-cli `sch export netlist` works on both .kicad_sch and .kicad_pcb paths.
-    // For PCB-specific netlist formats (IPC-D-356), delegate same way.
-    cli::export_netlist(cli, &board, &output, format).await?;
+    match format {
+        "ipc" | "ipcd356" => {
+            if !extension_is(&board, "kicad_pcb") {
+                return Ok(invalid_export_argument(
+                    "board",
+                    "IPC-D-356 requires an explicit .kicad_pcb path",
+                ));
+            }
+            cli::export_ipcd356(cli, &board, &output).await?;
+        }
+        _ => {
+            if !extension_is(&board, "kicad_sch") {
+                return Ok(invalid_export_argument(
+                    "format",
+                    "KiCad-format netlists from a PCB are unsupported. Use generate_netlist \
+                     with an explicit .kicad_sch path, or format 'ipc' for this PCB. \
+                     No sibling schematic is inferred.",
+                ));
+            }
+            cli::export_netlist(cli, &board, &output, "kicad").await?;
+        }
+    }
 
     Ok(CallToolResult::text(
         serde_json::to_string(&json!({
@@ -1520,3 +1584,7 @@ mod fabrication_option_tests {
         assert_eq!(error["error"]["field"], "layers[1]");
     }
 }
+
+#[cfg(test)]
+#[path = "pcb_export_contract_tests.rs"]
+mod pcb_export_contract_tests;
