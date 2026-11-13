@@ -173,6 +173,14 @@ Tickets: `agmr vspd ms3p 3bqz emvb th5d 0753 qe1f c8mm 1d0x xa45`
 First verify `3bqz/emvb` preservation/refusal for whole-footprint replacement.
 Dry run and apply must refuse before dropping groups, points or variants. This
 gates A7's wider update path.
+For original `3bqz` closure, safe refusal and mock controls are not enough.
+Require actual native loss through the maintained whole-footprint sync with
+only its inventory guard disabled in a separately built disposable control.
+The optional control, per-kind observations and restored-positive commands
+are documented in `NATIVE_FOOTPRINT_CHILDREN.md`. That supervised gate passed
+on maintained child `a8b79adc`: owned groups and variants were lost, while the
+point and board-level group membership survived. The bounded refusal is
+merged at `ca8632d`; the other A8 scopes below remain separate.
 
 Other small packets cover BOM versus board exclusion, library placement flags,
 pad fabrication properties, exact-root identity normalization, zone/net routing

@@ -33,6 +33,40 @@ See `docs/stabilization/PROJECT_RENAME_SAFETY.md` for limits, fixture provenance
 and the coordinator-owned validation gates, including pending macOS/Windows
 runtime qualification.
 
+## Unreleased: existing footprint replacements refuse unsupported native children
+
+`update_pcb_from_schematic` and `update_footprints_from_library` now refuse an
+existing whole-footprint replacement when the placed instance directly owns
+a native group, point or variant. Both dry run and apply return the existing
+`status: "conflict"` contract with `footprint_children_not_carried`. Its
+diagnostic includes `reference`, `kiid`, `library_id`, `kinds`, direct child
+counts and variant names. Sync also keeps its `footprint_id` and `references`.
+Unreadable or ambiguous inventory uses the same code with `inventory_error`;
+empty `kinds` then means unknown, not safe.
+
+The inventory reads `SaveDocumentToString` for the exact bound live board,
+not the saved file or a reference guess. Missing or duplicate target KIIDs,
+malformed documents and a wrong root fail closed. Apply reads again even if
+the reviewed protobuf plan revision is unchanged. One unsafe target refuses
+the entire plan, including safe additions and updates, before any commit,
+mutation, save or revert.
+
+Only actual existing replacement targets are inventoried. Noop and add-only
+plans do not add an inventory read. Sync retains its existing pre-commit
+recovery snapshot for an apply, including add-only apply. Board-level group
+membership and board-level variant declarations alone do not cause refusal.
+
+This is a compatibility refusal, not expanded propagation or preservation.
+Opaque `Any` data can retain points on some sync paths. The refusal does not
+assert that every KiCad version loses every child kind. Existing revision
+guards remain; this adds no cross-request atomic GUI lock and no universal
+metadata-preservation promise. Library-input policy is unchanged.
+
+See `docs/stabilization/NATIVE_FOOTPRINT_CHILDREN.md` for scope, provenance and
+verified coordinator gates. Linux/KiCad 10.0.8 acceptance reproduced owned
+group and variant loss through an unguarded sync; the point and board-level
+group membership survived. This is not a cross-version preservation promise.
+
 ## Unreleased: placed schematic symbols preserve optional attribute syntax
 
 `konnect_schematic_editor::Symbol` keeps every existing public field and type.
@@ -95,9 +129,10 @@ remain observable.
 This does not adopt library presentation for direct `place_component`, reset
 placed Reference/Value during refresh, propagate schematic custom fields or
 expand existing-footprint sync updates. Board-default field styling is not
-followed. Stroke/no-op convergence and A8 whole-footprint child preservation
-remain separate work. See `docs/stabilization/LIBRARY_FIELDS.md` for the
-coordinator-owned native gate and remaining #789 acceptance.
+followed. Stroke/no-op convergence and broader whole-footprint metadata
+preservation remain separate work. The bounded native-child refusal above
+does not implement general preservation. See `docs/stabilization/LIBRARY_FIELDS.md`
+for the coordinator-owned native gate and remaining #789 acceptance.
 
 ## Unreleased: Rust schematic text retains simulation exclusion and unknown children
 

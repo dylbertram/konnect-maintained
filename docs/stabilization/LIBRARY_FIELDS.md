@@ -101,9 +101,10 @@ post-commit readback; the native gate separately checks its saved fields.
 
 No existing-footprint sync update expansion, direct-placement field adoption,
 stroke/no-op normalizer, A7 propagation/reset, protobuf or schematic changes
-are included. A8 `3bqz/emvb` whole-footprint loss guards are not fixed here.
-Review their overlap in `pcb_sync.rs` before integration, and do not run this
-gate against a board owning groups, points, variants or other unsupported data.
+are included. The separately verified A8 `3bqz/emvb` refusal now guards native
+groups, points and variants on replacement targets; see
+`NATIVE_FOOTPRINT_CHILDREN.md`. This field gate still uses safe fixtures and
+does not establish preservation of other unsupported data.
 
 ## Coordinator-admitted remote gates
 
@@ -392,8 +393,9 @@ parts evidence. Pad-fabrication losses and coordinate-rounding mismatches are
 separate unresolved acceptance concerns, not silently fixed by field adoption.
 
 `x698` direct-placement presentation, `asfr/fnn9` stroke/native no-op behavior,
-A7 symbol-field propagation, reset presentation and A8 preservation remain
-separate. Do not close them or pull in their cumulative candidates.
+A7 symbol-field propagation, reset presentation and broader A8 preservation
+remain separate from the verified three-kind refusal. Do not close those
+remaining scopes or pull in their cumulative candidates.
 
 Future increments follow the same parent integration and clean-child removal
 contract in `CLEANUP_PLAN.md`. This work does not authorize main publication,

@@ -187,6 +187,8 @@ pub fn tools() -> Vec<ToolDef> {
             "Plan or atomically apply saved schematic hierarchy changes to the live KiCad PCB. \
              Defaults to a non-mutating dry run; apply requires its exact plan revision. \
              Preserves placement, routing, board-only footprints, and footprint artwork. \
+             Existing replacements refuse native-owned groups, points or variants whose \
+             preservation is unsupported; one unsafe target refuses the whole plan. \
              A symbol with no footprint assigned is reported under `unassigned_footprints` \
              and the sync proceeds for every other component. A library footprint that \
              cannot be placed, or a connected pad its footprint does not have, makes the dry \

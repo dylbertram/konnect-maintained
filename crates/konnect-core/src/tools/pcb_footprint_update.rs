@@ -136,6 +136,7 @@ impl PreservedState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct PlannedUpdate {
     reference: String,
+    kiid: String,
     library_id: String,
     changed_domains: BTreeSet<ChangedDomain>,
     preserved: PreservedState,
@@ -146,6 +147,8 @@ struct UpdateDiagnostic {
     code: String,
     message: String,
     reference: Option<String>,
+    #[serde(flatten)]
+    children: Option<super::native_footprint_children::Details>,
 }
 
 #[derive(Debug)]
@@ -163,8 +166,9 @@ pub(crate) fn tool() -> ToolDef {
         "update_footprints_from_library",
         "Plan or atomically apply KiCad's Update Footprints from Library operation to placed \
          footprints on the live board. Defaults to a non-mutating dry run; apply requires its \
-         exact plan revision. Preserves placed-instance state and pad nets while refreshing \
-         supported library-owned content.",
+         exact plan revision. Preserves supported placed-instance state and pad nets while \
+         refreshing supported library-owned content. Existing replacements refuse native-owned \
+         groups, points or variants whose preservation is unsupported.",
         json!({
             "type": "object",
             "properties": {
@@ -268,6 +272,36 @@ pub(crate) async fn handle_update_footprints_from_library(
                 &filters,
             );
 
+            let targets = plan
+                .changes
+                .iter()
+                .map(|change| super::native_footprint_children::Target {
+                    reference: change.reference.clone(),
+                    kiid: change.kiid.clone(),
+                    library_id: change.library_id.clone(),
+                })
+                .collect::<Vec<_>>();
+            let child_conflicts = super::native_footprint_children::preflight(
+                client,
+                &document,
+                &targets, // A8 refresh inventory targets
+            );
+            if !child_conflicts.is_empty() {
+                plan.status = PlanStatus::Conflict;
+                plan.coverage.conflicts.planned += child_conflicts.len();
+                plan.coverage.changed.planned = 0;
+                plan.changes.clear();
+                plan.prepared_items.clear();
+                for refusal in child_conflicts {
+                    plan.diagnostics.push(UpdateDiagnostic {
+                        code: super::native_footprint_children::DIAGNOSTIC.to_string(),
+                        message: refusal.message(),
+                        reference: Some(refusal.reference),
+                        children: Some(refusal.details),
+                    });
+                }
+            }
+
             if dry_run || plan.status == PlanStatus::Conflict {
                 return Ok(plan_response(&plan, false));
             }
@@ -279,6 +313,7 @@ pub(crate) async fn handle_update_footprints_from_library(
                     message: "The live board, selected libraries, or filters changed; rerun dry run and apply its new plan revision."
                         .to_string(),
                     reference: None,
+                    children: None,
                 });
                 plan.changes.clear();
                 plan.prepared_items.clear();
@@ -502,6 +537,7 @@ fn plan_updates(
                     code: "invalid_board_footprint".to_string(),
                     message: format!("KiCad returned an invalid footprint: {error}"),
                     reference: None,
+                    children: None,
                 });
                 continue;
             }
@@ -529,11 +565,13 @@ fn plan_updates(
                     code: "reference_not_found".to_string(),
                     message: format!("footprint reference '{reference}' was not found"),
                     reference: Some(reference.clone()),
+                    children: None,
                 }),
                 count if count > 1 => diagnostics.push(UpdateDiagnostic {
                     code: "duplicate_reference".to_string(),
                     message: format!("footprint reference '{reference}' appears {count} times"),
                     reference: Some(reference.clone()),
+                    children: None,
                 }),
                 _ => {}
             }
@@ -545,6 +583,7 @@ fn plan_updates(
                     code: "duplicate_reference".to_string(),
                     message: format!("footprint reference '{reference}' appears {count} times"),
                     reference: Some(reference.clone()),
+                    children: None,
                 });
             }
         }
@@ -591,6 +630,7 @@ fn plan_updates(
                     candidate.reference
                 ),
                 reference: Some(candidate.reference.clone()),
+                children: None,
             });
         }
     }
@@ -611,6 +651,7 @@ fn plan_updates(
                     candidate.reference, candidate.library_id
                 ),
                 reference: Some(candidate.reference),
+                children: None,
             });
             continue;
         };
@@ -622,6 +663,7 @@ fn plan_updates(
                     candidate.reference, candidate.library_id
                 ),
                 reference: Some(candidate.reference),
+                children: None,
             });
             continue;
         }
@@ -636,6 +678,7 @@ fn plan_updates(
                     code: "footprint_library_resolution_failed".to_string(),
                     message,
                     reference: Some(candidate.reference),
+                    children: None,
                 });
                 continue;
             }
@@ -647,6 +690,7 @@ fn plan_updates(
                     code: "footprint_library_read_failed".to_string(),
                     message: format!("failed to read {}: {error}", library_path.display()),
                     reference: Some(candidate.reference),
+                    children: None,
                 });
                 continue;
             }
@@ -658,6 +702,7 @@ fn plan_updates(
                     code: "unsupported_library_footprint".to_string(),
                     message: format!("{error:#}"),
                     reference: Some(candidate.reference),
+                    children: None,
                 });
                 continue;
             }
@@ -670,6 +715,7 @@ fn plan_updates(
                         code: "footprint_update_conflict".to_string(),
                         message: format!("{error:#}"),
                         reference: Some(candidate.reference),
+                        children: None,
                     });
                     continue;
                 }
@@ -685,6 +731,12 @@ fn plan_updates(
             coverage.changed.planned += 1;
             changes.push(PlannedUpdate {
                 reference: candidate.reference,
+                kiid: candidate
+                    .instance
+                    .id
+                    .as_ref()
+                    .map(|id| id.value.clone())
+                    .unwrap_or_default(),
                 library_id: candidate.library_id,
                 changed_domains: prepared.changed_domains,
                 preserved: prepared.preserved,
@@ -3258,6 +3310,26 @@ mod tests {
                             nets: vec![builders::net("ROW1", 11), builders::net("COL1", 12)],
                         },
                         "kiapi.board.commands.NetsResponse",
+                    ))
+                } else if message.type_url.ends_with("SaveDocumentToString") {
+                    let command = kiapi::common::commands::SaveDocumentToString::decode(
+                        message.value.as_slice(),
+                    )
+                    .unwrap();
+                    let instance =
+                        kiapi::board::types::FootprintInstance::decode(footprint.value.as_slice())
+                            .unwrap();
+                    // SYNTHETIC native response for this mock instance, not
+                    // a saved native fixture or a native acceptance oracle.
+                    api_reply(builders::pack_any(
+                        &kiapi::common::commands::SavedDocumentResponse {
+                            document: command.document,
+                            contents: format!(
+                                "(kicad_pcb (footprint \"Test:Socket\" (uuid \"{}\")))",
+                                instance.id.unwrap().value,
+                            ),
+                        },
+                        "kiapi.common.commands.SavedDocumentResponse",
                     ))
                 } else if message.type_url.ends_with("BeginCommit") {
                     captured.lock().unwrap().begin_count += 1;
