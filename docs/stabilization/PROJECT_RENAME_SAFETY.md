@@ -198,3 +198,125 @@ public Konnect rename/exports or native KiCad, retained before/after bytes,
 identity/netlist checks, and supervised deadlines/audits using the unchanged
 existing export supervisor. Do not open shared hardware, hand-patch CAD, infer
 native acceptance from synthetic variants or use unbounded native processes.
+
+## Source-only Linux native rename gate
+
+`crates/konnect-core/tests/project_rename_native.py` is prepared for reviewer
+inspection and coordinator admission. It has **not been executed by the child**.
+It requires provisioned Linux, Python 3.9+, KiCad CLI/pcbnew 10.0.8, Xvfb, the
+existing KiCad configuration templates, and an already-built Konnect binary.
+Missing prerequisites fail; nothing is installed or skipped.
+
+The helper imports the unchanged `library_field_native.NativeRun`, `Api`,
+`open_editor` and `stop_editor` implementations. It also reuses the unchanged
+A8 `isolate` and optional `OwnedProxy`. Private HOME/XDG/runtime/DBus settings
+are established before importing pcbnew or opening the owned editor. It never
+uses the global Konnect service or a shared hardware project.
+
+The source manifest verifies the existing 15 pins without changing them and
+records the helper/lifecycle/supervisor source hashes before and after the run.
+The revision is supplied externally; no Git is needed in the uploaded archive.
+The report records executable hashes and actual native versions. A matching
+binary-to-source build provenance record remains the coordinator's responsibility.
+
+The gate uses two fresh, clearly reported fixture copies:
+
+1. The refusal copy opens the old-name board in its own real PCB Editor.
+   Public `open_project` must confirm that exact board. Public `rename_project`
+   must return an error with a failed outcome, zero applied work, unchanged
+   current paths, and byte-identical project files/tree entries during the
+   call. The actual reason/message are retained. The unchanged `Api.call`
+   deliberately asserts on MCP errors; a small adapter accepts only that exact
+   assertion with its complete retained `isError` response, not transport
+   failures or unrelated exceptions.
+2. After stopping/reaping that owned editor and closing its transport, the
+   positive copy starts from untouched fixture bytes. This avoids deleting
+   authentic locks or incorporating editor-generated PRL/project state into the
+   byte oracle. It does **not** prove recovery of a previously observed-live
+   project's saved-file authority in the same server session.
+
+No authentic lock is removed to force the exact IPC branch. A project/design
+lock may refuse first. That is valid native ownership evidence, not exact IPC
+branch coverage. The report distinguishes it from the existing served-mock
+coverage. When `--capture-helper` names the already-built
+`native_footprint_children_capture` example, its unchanged proxy mode forwards
+real bytes to the same owned editor and retains raw request/response files.
+The refusal interval must contain zero mutation RPCs and no unclassified
+non-read commands; an empty interval caused by an earlier lock is reported
+honestly. Omitting this optional argument records RPC observation as unavailable,
+not zero. No fake RPC is generated.
+
+The positive case uses public MCP dry run and apply with
+`rename_directory: true`. Dry run must preserve all tree entries and bytes and
+preview the independently known counts. Apply must report the actual three
+filename moves, three verified rewrites and final directory/current paths.
+Independent byte comparisons allow exactly 29 root and 36 child project-key
+changes, the existing project's one documented `.kicad_pro` filename
+substitution, and **no PCB byte changes**. Neither production transformer nor
+CAD text authoring supplies the expected outputs.
+
+Actual `kicad-cli sch export netlist --format kicadxml` runs on retained read
+copies before and after rename. Exported XML is retained and compared by
+component references/UUIDs/library/value/footprint/sheet UUIDs and named
+pin-net membership, excluding only export ordering, net codes, generator dates
+and design source filenames. pcbnew loads the saved before/after PCB and checks
+footprints, pad net names, UUIDs and placement. It never saves/upgrades the CAD.
+
+The schematic demo and two-resistor PCB are **independent fixtures**. This is
+not schematic/PCB parity or sync evidence. Native PCB project-token rewriting
+remains **UNESTABLISHED**; the existing PCB has no such token. No additional
+asset is imported, fabricated or patched.
+
+### Coordinator command, not executed
+
+Run only after reviewing this source, capacity admission, and confirming that
+the executable hashes belong to the intended immutable production source.
+Use fresh paths outside the source archive. The following configures a copy of
+the **unchanged** existing supervisor; it does not modify that source helper.
+An already-built proxy helper is optional; remove only its argument when proxy
+observation is not requested. Do not build/install prerequisites in this gate.
+
+```sh
+SRC=/home/user/rename-source
+RUN=/home/user/project-rename-native-run
+OUT=/home/user/project-rename-native-evidence
+KONNECT=/absolute/path/to/already-built/konnect
+CAPTURE=/absolute/path/to/already-built/native_footprint_children_capture
+: "${SOURCE_REVISION:?Set the externally supplied full 40-hex source-archive commit}"
+
+mkdir "$RUN"
+cp "$SRC/crates/konnect-core/tests/support/pcb_export_supervisor.py" "$RUN/supervisor.py"
+cmp "$SRC/crates/konnect-core/tests/support/pcb_export_supervisor.py" "$RUN/supervisor.py"
+cat >"$RUN/supervisor.json" <<JSON
+{"program":"/usr/bin/python3","seconds":60,"audit":"$RUN/supervisor-audit"}
+JSON
+
+timeout --signal=TERM --kill-after=5s 75s xvfb-run -a \
+  /usr/bin/python3 "$RUN/supervisor.py" \
+  "$SRC/crates/konnect-core/tests/project_rename_native.py" \
+  --disposable-worker --source-revision "$SOURCE_REVISION" \
+  --konnect "$KONNECT" --capture-helper "$CAPTURE" --out "$OUT"
+```
+
+The child runtime budget is 60 seconds. CLI calls have 12-second leader
+timeouts; reused MCP calls have 12-second deadlines and editor readiness has
+its unchanged 15-second deadline. The outer wrapper sends TERM at 75 seconds
+and KILL five seconds later, bounding supervisor and Xvfb shutdown as well.
+These are limits, not a promise that prerequisites
+or acceptance will finish within them.
+
+Retain `native-project-rename.json`, `native-lifecycle.json`, served response
+JSON/logs, before/after/final CAD copies and their hash manifests, native XML and canonical JSON,
+saved-PCB identity JSON, CLI audits/stdout/stderr, optional proxy raw files and
+the supervisor's `started.json`/`finished.json`. A pass requires unchanged
+source/fixture hashes, successful lifecycle audits and verified absence of the
+owned control root. The supervisor must report status 0, `timed_out: false`
+and `group_reaped: true`; a helper report alone cannot establish acceptance.
+Existing lifecycle rules remain unchanged: no signalling
+discovered/shared services, no unmounts, and no manual deletion of a failed
+control root. Missing artifacts, timeout, cleanup errors or unverifiable root
+absence are failures, not acceptance evidence.
+
+This Linux source-only gate does not establish native macOS/Windows behavior,
+cross-SDK availability, UNC behavior, filesystem-general atomicity, external-save
+race exclusion, native PCB project-token rewrites or full transaction semantics.
