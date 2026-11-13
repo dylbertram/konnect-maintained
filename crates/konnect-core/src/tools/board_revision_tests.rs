@@ -377,12 +377,18 @@ async fn served_writers_report_postwrite_readback_mismatch_or_io_failure_as_unce
 async fn served_writers_never_fall_back_while_the_exact_board_is_live() {
     for tool in TOOLS {
         let (_dir, board) = fixture();
-        let kicad = board_mock::spawn_kicad_holding_board(&board, |_| None);
+        let kicad = board_mock::spawn_kicad_holding_board_refusing(
+            &board,
+            vec![konnect_ipc::gen::kiapi::common::types::KiCadObjectType::KotPcbShape],
+            |_| None,
+        );
         let api = handler(kicad.address()).await;
         let _armed = arm(&board, false, Fault::Save("must not run".into()));
         let result = call(&api, tool, arguments(tool, &board)).await;
-        // Missing command replies refuse or fail readback on the live path;
-        // they must never authorize a saved-file mutation.
+        // Explicitly reject GetItems for graphics: a missing body is an empty
+        // inventory, which legitimately makes delete_graphics a successful
+        // IPC no-op. Other missing replies refuse or fail live readback.
+        // Neither failure may authorize a saved-file mutation.
         assert!(result.is_error, "{tool}: {:?}", result.content);
         assert!(
             pending(),
