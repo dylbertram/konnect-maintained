@@ -294,6 +294,63 @@ async fn transfer_native_public_api_consolidates_both_circuit_groups() {
     println!("Native public API: startup limiter and fuse/bypass consolidation preserve identities, geometry, connectivity and ERC");
 }
 
+#[tokio::test]
+#[ignore = "requires installed KiCad 10 CLI and symbol libraries"]
+async fn repair_native_public_api_restores_instance_roots_without_circuit_changes() {
+    let cli = std::env::var("KONNECT_TEST_KICAD_CLI").expect("KONNECT_TEST_KICAD_CLI is required");
+    let api = handler(&cli, "").await;
+    let fixture = fixture(&api).await;
+    let baseline = project_bytes(&fixture);
+    let root = parse_sexp(&baseline[&fixture.root])
+        .unwrap()
+        .find_str("uuid")
+        .unwrap()
+        .to_owned();
+    let old = "cd385c7a-53db-42a0-815e-a24ef952404d";
+    for (path, source) in &baseline {
+        if path.extension().is_some_and(|ext| ext == "kicad_sch") {
+            std::fs::write(
+                path,
+                source.replace(&format!("\"/{root}"), &format!("\"/{old}")),
+            )
+            .unwrap();
+        }
+    }
+    let stale = project_bytes(&fixture);
+    let args = json!({"schematic":fixture.root,"old_root_uuid":old,"dry_run":true});
+    let planned = call(&api, "repair_schematic_instance_roots", args.clone()).await;
+    assert_eq!(planned["status"], "planned");
+    assert_eq!(planned["canonical_root_uuid"], root);
+    assert_eq!(planned["symbol_instance_records"], 7);
+    assert_eq!(planned["sheet_instance_records"], 4);
+    assert_eq!(
+        stale,
+        project_bytes(&fixture),
+        "repair dry-run changed a project file"
+    );
+    let mut apply = args;
+    apply["dry_run"] = json!(false);
+    apply["expected_plan_revision"] = planned["plan_revision"].clone();
+    let repaired = call(&api, "repair_schematic_instance_roots", apply).await;
+    assert_eq!(repaired["status"], "repaired");
+    assert_eq!(
+        baseline,
+        project_bytes(&fixture),
+        "repair changed bytes beyond the stale path prefixes"
+    );
+    let noop = call(
+        &api,
+        "repair_schematic_instance_roots",
+        json!({
+            "schematic":fixture.root,"old_root_uuid":old
+        }),
+    )
+    .await;
+    assert_eq!(noop["status"], "noop");
+    consolidate(&api, &fixture).await;
+    println!("Native instance-root repair: exact original bytes restored; canonical root and circuit identities preserved; transfer dry-run/apply works afterward in the synthetic fixture");
+}
+
 fn native_board(mode: &str, board: &Path, spec: Option<&Path>) -> Value {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/native_transfer_board.py");
     let mut command = std::process::Command::new("/usr/bin/python3");

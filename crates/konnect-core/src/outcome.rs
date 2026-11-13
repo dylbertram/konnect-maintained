@@ -19,6 +19,7 @@ pub const ADOPTED_OUTCOME_TOOLS: &[&str] = &[
     "annotate_schematic",
     "batch_place_components",
     "move_schematic_objects_between_sheets",
+    "repair_schematic_instance_roots",
     "run_design_review",
 ];
 
