@@ -3,6 +3,24 @@
 Konnect's tool schemas are public API. This file records intentional argument
 removals and the supported replacement workflow.
 
+## Unreleased: Rust schematic properties retain KiCad's private flag
+
+`konnect_schematic_editor::Property` adds a public `private: bool` field.
+`Property::new(name, value)` keeps its signature and creates an ordinary,
+non-private field. Existing field access and constructor-based callers need no
+change. Downstream exhaustive struct literals must add `private: false`, or
+the intended flag. Exhaustive destructuring must bind the new field or use `..`.
+This is a Rust source-compatibility break, not "no public compatibility impact".
+
+Placed schematic get/list responses keep their existing shape. A bare
+`(property private "NAME" "VALUE" ...)` now appears under its real `NAME`, with
+its real `VALUE`, rather than as a field named `private`. An ordinary quoted
+field name `"private"` stays an ordinary field. Existing model writes retain
+the flag before the name; editing a field's value or placement retains its
+private status. This does not add a tool argument to change that status, or fix
+library-property tools. See `docs/stabilization/PRIVATE_FIELDS.md` for scope
+and verification limits.
+
 ## Unreleased: saved-board writes refuse stale snapshots
 
 The file fallbacks for `set_board_size`, `add_layer`, `add_board_outline`,
