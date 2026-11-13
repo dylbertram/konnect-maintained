@@ -315,6 +315,8 @@ class KonnectSettingsDialog(wx.Dialog):
             "log_level": LOG_LEVELS[self.log_level_ctrl.GetSelection()],
             "transport": TRANSPORTS[self.transport_ctrl.GetSelection()],
             "native_specctra_bridge": self.native_bridge_ctrl.GetValue(),
+            # Headless-only capability is configured explicitly in settings.json.
+            "native_editor_shutdown": self.settings.get("native_editor_shutdown") is True,
         }
 
     def _update_server_status(self):

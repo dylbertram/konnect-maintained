@@ -13,7 +13,7 @@ Compatibility notes for removed or narrowed arguments are recorded in
 ## Overview
 
 - **21 toolsets** organized into 10 categories
-- **229 registered tools** + **7 always-visible meta-tools** = **236 total**
+- **231 registered tools** + **7 always-visible meta-tools** = **238 total**
 - **Discovery pattern**: the server pre-loads only the **starter kit** (`project`, `config`) so baseline `tools/list` costs ~2K tokens instead of ~23K. The LLM reads `list_toolboxes` → calls `load_toolset(name)` to expose additional tools on demand; `unload_toolset(name)` prunes them. `tools/list_changed` is notified on every mutation. If the LLM calls a tool whose toolset isn't loaded, the error names the owning toolset so recovery is a single `load_toolset` hop. `load_toolset` also accepts an array of names to load several toolsets with a single `tools/list` refresh.
 - **Observability**: every `tools/call` is recorded — ring buffer of the last 100 calls + per-tool counters + JSONL at `<konnect dir>/logs/calls.jsonl`. The LLM self-diagnoses via `get_recent_calls` and `server_stats`.
 
@@ -56,8 +56,8 @@ and Windows servers do not.
 
 ## Project
 
-### `project` · 7 tools
-**Purpose:** Create, open, save, rename, snapshot KiCAD projects, and launch the live schematic viewer.
+### `project` · 9 tools
+**Purpose:** Create, open, save, rename, snapshot KiCAD projects, launch the live schematic viewer, and gracefully close verified PCB Editors.
 **Source:** [`crates/konnect-core/src/tools/project.rs`](crates/konnect-core/src/tools/project.rs)
 
 | Tool | Description |
@@ -69,6 +69,8 @@ and Windows servers do not.
 | `rename_project` | Rename the `.kicad_pro`/`.kicad_sch`/`.kicad_pcb`/`.kicad_prl` files *and* the internal references that carry the old name. Renaming the files alone makes KiCad treat the design as unannotated, losing every reference designator, because each symbol instance stores `(project "name")`. Supports `dry_run`. |
 | `snapshot_project` | Export the schematic and PCB to PDF as a timestamped snapshot/checkpoint. Useful before major edits. |
 | `open_schematic_viewer` | Launch the live schematic viewer (SVG with auto-refresh on file change). Use after placing components so the user can see changes in real time. |
+| `get_editor_shutdown_target` | Observe one exact saved PCB Editor target through the opt-in native bridge. Linux KiCad 10.0.8 only. Refuses ambiguous editor instances. |
+| `shutdown_editor` | Request normal, non-forced shutdown of that verified editor and confirm its process generation exited. Never saves or discards work. Refuses dirty boards and ancillary frames/dialogs. See [editor shutdown](docs/EDITOR_SHUTDOWN.md). |
 
 ### `editor_navigation` · 5 tools
 **Purpose:** Observe and semantically navigate exact KiCad editor, document, sheet, selection, and cross-probe context.

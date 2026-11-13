@@ -61,6 +61,10 @@ remains out of scope (issue #604).
 
 ### Editor observation
 
+For headless PCB Editor shutdown, see [editor shutdown](EDITOR_SHUTDOWN.md).
+This is an opt-in, version-pinned native bridge capability, not a typed IPC
+shutdown command or MCP server stop operation.
+
 `konnect-ipc::KiCadIpcClient::observe_editor_state` queries the running KiCad
 version and schematic/PCB `GetOpenDocuments` surfaces on the configured
 endpoint. `tools/editor_navigation.rs` exposes that typed observation through

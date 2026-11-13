@@ -1,9 +1,9 @@
 """Authenticated KiCad 10 native-operation bridge for Konnect.
 
 This module is loaded only by the legacy ``pcbnew.ActionPlugin``.  It exposes
-one deliberately narrow operation to the external Rust server: ask KiCad's
-own SWIG binding to export the active board as Specctra DSN.  It is not a
-general Python execution service and is not the KiCad 11 integration path.
+deliberately narrow operations to the external Rust server: native Specctra
+export and an independently opt-in, version-pinned PCB Editor close. It is not
+a general Python execution service or the KiCad 11 integration path.
 """
 
 import json
@@ -114,7 +114,9 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._require_auth():
             return
-        if self.path != "/v1/export-specctra-dsn":
+        if self.path not in (
+            "/v1/export-specctra-dsn", "/v1/editor-target", "/v1/shutdown-editor"
+        ):
             self._json(404, {"success": False, "error": "unknown operation"})
             return
         try:
@@ -130,7 +132,13 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
             expected_board = request["expected_board"]
             if not isinstance(expected_board, str) or not expected_board:
                 raise ValueError("expected_board must be a non-empty string")
-            result = self.server.bridge.export_specctra_dsn(expected_board)
+            if self.path == "/v1/export-specctra-dsn":
+                result = self.server.bridge.export_specctra_dsn(expected_board)
+            else:
+                result = self.server.bridge.editor_operation(
+                    expected_board, self.path == "/v1/shutdown-editor",
+                    request.get("requester_pid"),
+                )
         except (KeyError, ValueError, json.JSONDecodeError) as error:
             self._json(400, {"success": False, "error": str(error)})
             return
@@ -143,7 +151,8 @@ class _BridgeRequestHandler(BaseHTTPRequestHandler):
 class NativeSpecctraBridge:
     """Own one authenticated loopback server for one PCB Editor process."""
 
-    def __init__(self, pcbnew_module, wx_module, root=None):
+    def __init__(self, pcbnew_module, wx_module, root=None,
+                 allow_editor_shutdown=False, mcp_server_pid=None):
         self.pcbnew = pcbnew_module
         self.wx = wx_module
         self.root = root or bridge_root()
@@ -157,6 +166,9 @@ class NativeSpecctraBridge:
         self.session_dir = None
         self.started_at = None
         self.operation_lock = threading.Lock()
+        self.allow_editor_shutdown = allow_editor_shutdown is True
+        self.allow_specctra_export = True
+        self.mcp_server_pid = mcp_server_pid or (lambda: None)
 
     def available(self):
         return callable(getattr(self.pcbnew, "ExportSpecctraDSN", None))
@@ -220,10 +232,105 @@ class NativeSpecctraBridge:
             "success": True,
             "protocol_version": PROTOCOL_VERSION,
             "pid": os.getpid(),
-            "native_specctra_export": self.available(),
+            "native_specctra_export": self.available() and self.allow_specctra_export,
         }
 
+    def editor_operation(self, expected_board, close, requester_pid=None):
+        """Validate and close on ONE UI turn, without yielding to other edits.
+
+        KiCad 10.0.8 PCB_EDIT_FRAME::UpdateTitle/OnModify synchronously mirror
+        IsContentModified as a leading '*'. There is no SWIG dirty-state query.
+        Keep this compatibility path version-pinned and refuse unknown titles,
+        ancillary frames and dialogs before invoking the vetoable native Close.
+        """
+        if not self.allow_editor_shutdown:
+            return {"success": False, "status": "unsupported",
+                    "reason": "native_editor_shutdown is disabled"}
+        if not self.operation_lock.acquire(blocking=False):
+            return {"success": False, "status": "refused", "reason": "bridge is busy"}
+        completed = threading.Event()
+        result = {}
+        deadline = time.monotonic() + UI_TIMEOUT_SECONDS
+
+        def run_on_ui_thread():
+            try:
+                # An expired queued callback must NEVER perform a late shutdown.
+                if time.monotonic() >= deadline:
+                    result.update(success=False, status="timed_out",
+                                  reason="UI request expired before execution")
+                    return
+                if not self.allow_editor_shutdown or not self.running():
+                    result.update(success=False, status="refused",
+                                  reason="shutdown capability was disabled or bridge stopped")
+                    return
+                version = self.pcbnew.Version()
+                if sys_platform() != "linux" or version != "10.0.8":
+                    result.update(success=False, status="unsupported",
+                                  reason=f"requires Linux KiCad 10.0.8; observed {sys_platform()} KiCad {version}",
+                                  kicad_version=version)
+                    return
+                board = self.pcbnew.GetBoard()
+                path = board.GetFileName() if board is not None else ""
+                if not path or _canonical(path) != _canonical(expected_board):
+                    result.update(success=False, status="wrong_target",
+                                  reason="active board does not match expected_board")
+                    return
+                windows = [w for w in self.wx.GetTopLevelWindows()
+                           if isinstance(w, (self.wx.Frame, self.wx.Dialog))]
+                frames = [w for w in windows if w.GetName() == "PcbFrame"]
+                if len(frames) != 1 or len(windows) != 1:
+                    result.update(success=False, status="refused",
+                                  reason="requires exactly one PCB frame and no ancillary frames/dialogs; "
+                                         f"observed names: {[w.GetName() for w in windows]}")
+                    return
+                frame = frames[0]
+                title = frame.GetTitle()
+                if title.startswith("*") or not os.path.isfile(path):
+                    result.update(success=False, status="save_required",
+                                  reason="save the target board explicitly before shutdown")
+                    return
+                stem = os.path.splitext(os.path.basename(path))[0]
+                if not title.startswith(stem + " \u2014 ") or not frame.IsEnabled():
+                    result.update(success=False, status="refused",
+                                  reason="native frame identity/title or enabled state is uncertain")
+                    return
+                result.update(success=True, status="ready", pid=os.getpid(),
+                              board_path=_canonical(path), kicad_version=version,
+                              mcp_server_pid=self.mcp_server_pid())
+                if close:
+                    if type(requester_pid) is not int or requester_pid <= 0:
+                        result.update(success=False, status="refused",
+                                      reason="requester PID is required")
+                        return
+                    if requester_pid == os.getpid() or self.mcp_server_pid() == requester_pid:
+                        result.update(success=False, status="refused",
+                                      reason="close would terminate the requesting MCP server")
+                        return
+                    # Non-forced wx close invokes KiCad's own canCloseWindow and
+                    # doCloseWindow, not Destroy(), RunAction or input automation.
+                    accepted = frame.Close(False)
+                    result.update(success=bool(accepted),
+                                  status="requested" if accepted else "refused",
+                                  reason="" if accepted else "KiCad vetoed normal close")
+            except Exception as error:
+                result.update(success=False, status="uncertain", reason=str(error)[:2000])
+            finally:
+                completed.set()
+                self.operation_lock.release()
+
+        try:
+            self.wx.CallAfter(run_on_ui_thread)
+        except Exception:
+            self.operation_lock.release()
+            raise
+        if not completed.wait(UI_TIMEOUT_SECONDS):
+            return {"success": False, "status": "timed_out",
+                    "reason": "UI thread did not complete; inspect before retrying"}
+        return result
+
     def export_specctra_dsn(self, expected_board):
+        if not self.allow_specctra_export:
+            raise RuntimeError("native Specctra export is disabled")
         if not self.running() or not self.session_dir:
             raise RuntimeError("native bridge is not running")
         if not self.operation_lock.acquire(blocking=False):

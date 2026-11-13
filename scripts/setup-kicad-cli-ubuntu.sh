@@ -24,7 +24,7 @@ if available < 1_500_000_000 or free_disk < 5_000_000_000:
     raise SystemExit('Insufficient capacity for bounded KiCad provisioning')
 PY
 
-packages=(kicad kicad-symbols kicad-footprints protobuf-compiler libprotobuf-dev xvfb xauth xdotool)
+packages=(kicad kicad-symbols kicad-footprints protobuf-compiler libprotobuf-dev xvfb xauth)
 ready=true
 for package in "${packages[@]}"; do
     if ! dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null | grep -qx installed; then
@@ -54,7 +54,7 @@ if [[ "$ready" != true ]]; then
     # --no-install-recommends excludes the multi-gigabyte kicad-packages3d set.
     sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
         apt-get install -y --no-install-recommends "kicad=$candidate" \
-        kicad-symbols kicad-footprints protobuf-compiler libprotobuf-dev xvfb xauth xdotool
+        kicad-symbols kicad-footprints protobuf-compiler libprotobuf-dev xvfb xauth
 fi
 
 version=$(kicad-cli --version)

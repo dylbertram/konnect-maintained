@@ -358,11 +358,18 @@ struct Editor {
     _control: tempfile::TempDir,
     socket: String,
     log: PathBuf,
+    board: PathBuf,
 }
 
 impl Editor {
     async fn open(board: &Path) -> Self {
+        Self::open_with_close_mode(board, "").await
+    }
+
+    async fn open_with_close_mode(board: &Path, mode: &str) -> Self {
         use std::process::{Command, Stdio};
+        let bridge_root = std::env::var_os("KONNECT_BRIDGE_DIR")
+            .expect("native editor tests require an isolated KONNECT_BRIDGE_DIR");
         let control = tempfile::Builder::new()
             .prefix("kt-")
             .tempdir_in("/tmp")
@@ -393,6 +400,36 @@ impl Editor {
             "(design_block_lib_table)\n",
         )
         .unwrap();
+        let plugins = versioned.join("scripting/plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/native_bridge.py"),
+            plugins.join("native_bridge.py"),
+        )
+        .unwrap();
+        std::fs::write(
+            plugins.join("zz_shutdown_fixture.py"),
+            "import atexit\nimport pcbnew\nimport wx\n\
+             from native_bridge import NativeSpecctraBridge\n\
+             bridge = NativeSpecctraBridge(pcbnew, wx, allow_editor_shutdown=True)\n\
+             bridge.start()\natexit.register(bridge.stop)\n\
+             import os\n\
+             mode = os.environ.get('KONNECT_TEST_CLOSE_MODE', '')\n\
+             original = bridge.editor_operation\n\
+             injected = [False]\n\
+             def operation(board, close, requester_pid=None):\n\
+                 \x20   if close and mode and not injected[0]:\n\
+                 \x20       injected[0] = True\n\
+                 \x20       frame = next(w for w in wx.GetTopLevelWindows() if w.GetName() == 'PcbFrame')\n\
+                 \x20       def intercept(event):\n\
+                 \x20           frame.Unbind(wx.EVT_CLOSE, handler=intercept)\n\
+                 \x20           if mode == 'veto':\n\
+                 \x20               event.Veto()\n\
+                 \x20       frame.Bind(wx.EVT_CLOSE, intercept)\n\
+                 \x20   return original(board, close, requester_pid)\n\
+             bridge.editor_operation = operation\n",
+        )
+        .unwrap();
         let log = control.path().join("pcbnew.log");
         let stdout = std::fs::File::create(&log).unwrap();
         let stderr = stdout.try_clone().unwrap();
@@ -401,6 +438,8 @@ impl Editor {
             .env("KICAD_CONFIG_HOME", &config)
             .env("TMPDIR", control.path())
             .env("LIBGL_ALWAYS_SOFTWARE", "1")
+            .env("KONNECT_TEST_CLOSE_MODE", mode)
+            .env("KONNECT_BRIDGE_DIR", bridge_root)
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
             .spawn()
@@ -411,6 +450,7 @@ impl Editor {
             _control: control,
             socket,
             log,
+            board: board.to_path_buf(),
         };
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
         loop {
@@ -437,28 +477,23 @@ impl Editor {
     }
 
     async fn close(mut self) {
-        // Send KiCad's normal Quit shortcut. xdotool windowclose destroys the
-        // X window rather than requesting a graceful application shutdown.
-        let output = std::process::Command::new("xdotool")
-            .args([
-                "search",
-                "--onlyvisible",
-                "--pid",
-                &self.child.id().to_string(),
-                "--name",
-                "PCB Editor",
-                "windowfocus",
-                "key",
-                "--clearmodifiers",
-                "ctrl+q",
-            ])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "Cannot close test editor: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let api = handler("", &self.socket).await;
+        let target = call(
+            &api,
+            "get_editor_shutdown_target",
+            json!({"expected_board":self.board}),
+        )
+        .await["target"]
+            .clone();
+        let result = call(
+            &api,
+            "shutdown_editor",
+            json!({"target":target,"timeout_seconds":15}),
+        )
+        .await;
+        assert_eq!(result["status"], "closed");
+        let repeated = call(&api, "shutdown_editor", json!({"target":target})).await;
+        assert_eq!(repeated["status"], "already_closed");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
@@ -486,7 +521,7 @@ impl Drop for Editor {
 }
 
 #[tokio::test]
-#[ignore = "requires KiCad 10, pcbnew Python, Xvfb DISPLAY and xdotool"]
+#[ignore = "requires Linux KiCad 10.0.8, pcbnew Python and Xvfb DISPLAY"]
 async fn transfer_native_existing_pcb_update_preserves_footprints_and_routing() {
     let cli = std::env::var("KONNECT_TEST_KICAD_CLI").expect("KONNECT_TEST_KICAD_CLI is required");
     assert!(
@@ -541,4 +576,99 @@ async fn transfer_native_existing_pcb_update_preserves_footprints_and_routing() 
     }
     assert_eq!(expected,after,"PCB update replaced, duplicated or moved an existing object, or changed routed connectivity");
     println!("Native PCB update: all footprint/pad/track UUIDs, placement, orientation, layers and routing retained");
+}
+
+#[tokio::test]
+#[ignore = "requires Linux KiCad 10.0.8, pcbnew Python and Xvfb DISPLAY"]
+async fn transfer_native_editor_shutdown_refuses_unsaved_and_wrong_target() {
+    let cli = std::env::var("KONNECT_TEST_KICAD_CLI").unwrap();
+    let api = handler(&cli, "").await;
+    let fixture = fixture(&api).await;
+    seed_board(&cli, &fixture).await;
+    let editor = Editor::open(&fixture.root.with_extension("kicad_pcb")).await;
+    let api = handler(&cli, &editor.socket).await;
+    let target = call(
+        &api,
+        "get_editor_shutdown_target",
+        json!({"expected_board":editor.board}),
+    )
+    .await["target"]
+        .clone();
+    let wrong_board = fixture.root.with_file_name("wrong.kicad_pcb");
+    std::fs::copy(&editor.board, &wrong_board).unwrap();
+    let before = std::fs::read(&editor.board).unwrap();
+    for (board, expected) in [
+        (wrong_board, "wrong_target"),
+        (editor.board.clone(), "save_required"),
+    ] {
+        if expected == "save_required" {
+            konnect_ipc::KiCadIpcClient::new(&editor.socket)
+                .run_commit("shutdown dirty-state acceptance", |client| {
+                    client.move_footprint("R101", 80.0, 60.0)
+                })
+                .unwrap();
+        }
+        let mut requested = target.clone();
+        requested["board_path"] = json!(board);
+        let reply = api
+            .handle_message(json!({
+                "jsonrpc":"2.0","id":1,"method":"tools/call",
+                "params":{"name":"shutdown_editor","arguments":{"target":requested}}
+            }))
+            .await
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(reply["isError"], true, "{reply:#}");
+        let text = reply["content"][0]["text"].as_str().unwrap();
+        let value: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(value["error"]["status"], expected, "{value:#}");
+        assert_eq!(std::fs::read(&editor.board).unwrap(), before);
+        assert!(konnect_ipc::KiCadIpcClient::new(&editor.socket)
+            .ping()
+            .unwrap());
+    }
+    // Explicit, separately verified save. Shutdown itself never saves.
+    call(&api, "save_project", json!({})).await;
+    assert_ne!(std::fs::read(&editor.board).unwrap(), before);
+    editor.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires Linux KiCad 10.0.8, pcbnew Python and Xvfb DISPLAY"]
+async fn transfer_native_editor_shutdown_veto_timeout_and_other_instance() {
+    let cli = std::env::var("KONNECT_TEST_KICAD_CLI").unwrap();
+    let api = handler(&cli, "").await;
+    let fixture = fixture(&api).await;
+    seed_board(&cli, &fixture).await;
+    let other_board = fixture.root.with_file_name("other.kicad_pcb");
+    std::fs::copy(fixture.root.with_extension("kicad_pcb"), &other_board).unwrap();
+    let other = Editor::open(&other_board).await;
+    for (mode, expected) in [("veto", "refused"), ("swallow", "timed_out")] {
+        let editor =
+            Editor::open_with_close_mode(&fixture.root.with_extension("kicad_pcb"), mode).await;
+        let target = call(
+            &api,
+            "get_editor_shutdown_target",
+            json!({"expected_board":editor.board}),
+        )
+        .await["target"]
+            .clone();
+        let reply = api.handle_message(json!({
+            "jsonrpc":"2.0","id":1,"method":"tools/call",
+            "params":{"name":"shutdown_editor","arguments":{"target":target,"timeout_seconds":1}}
+        })).await.unwrap().result.unwrap();
+        assert_eq!(reply["isError"], true, "{reply:#}");
+        let value: Value =
+            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(value["error"]["status"], expected, "{value:#}");
+        assert!(konnect_ipc::KiCadIpcClient::new(&editor.socket)
+            .ping()
+            .unwrap());
+        editor.close().await;
+        assert!(konnect_ipc::KiCadIpcClient::new(&other.socket)
+            .ping()
+            .unwrap());
+    }
+    other.close().await;
 }

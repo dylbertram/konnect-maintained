@@ -48,17 +48,23 @@ _CACHE_DIR = os.path.join(
     "konnect", "cache",
 )
 _PID_FILE = os.path.join(_CACHE_DIR, "server.pid")
-_native_bridge = NativeSpecctraBridge(pcbnew, wx)
+_native_bridge = NativeSpecctraBridge(
+    pcbnew, wx,
+    mcp_server_pid=lambda: _server_process.pid if _server_process is not None else None,
+)
 
 
 def _sync_native_bridge():
     """Apply the persisted KiCad-10 bridge setting without exposing internals."""
-    enabled = bool(load_settings(SETTINGS_PATH).get("native_specctra_bridge", False))
+    settings = load_settings(SETTINGS_PATH)
+    _native_bridge.allow_editor_shutdown = settings.get("native_editor_shutdown") is True
+    _native_bridge.allow_specctra_export = bool(settings.get("native_specctra_bridge", False))
+    enabled = _native_bridge.allow_specctra_export or _native_bridge.allow_editor_shutdown
     if enabled:
         try:
             _native_bridge.start()
         except Exception as error:
-            print(f"[Konnect] Native Specctra bridge failed to start: {error}", file=sys.stderr)
+            print(f"[Konnect] Native bridge failed to start: {error}", file=sys.stderr)
     else:
         _native_bridge.stop()
 

@@ -88,6 +88,10 @@ pub enum ToolErrorKind {
     /// No live editor endpoint is configured or reachable for the requested
     /// semantic operation.
     EditorUnavailable { editor: String, reason: String },
+    /// Native editor close refused, expired, or could not be verified.
+    /// status distinguishes save_required, wrong_target, unsupported, refused,
+    /// timed_out and uncertain. No variant authorizes force-killing the editor.
+    EditorShutdown { status: String, reason: String },
     /// The running KiCad version or the bundled stable protocol does not
     /// provide a capability the caller requested.
     UnsupportedCapability {
@@ -165,6 +169,7 @@ impl ToolErrorKind {
             Self::StaleTarget { .. } => "stale_target",
             Self::PlanBlocked { .. } => "plan_blocked",
             Self::EditorUnavailable { .. } => "editor_unavailable",
+            Self::EditorShutdown { .. } => "editor_shutdown",
             Self::UnsupportedCapability { .. } => "unsupported_capability",
             Self::ReadbackMismatch { .. } => "readback_mismatch",
             Self::MutationOutcomeUncertain { .. } => "mutation_outcome_uncertain",
@@ -324,6 +329,10 @@ mod tests {
             ToolErrorKind::EditorUnavailable {
                 editor: "pcb".into(),
                 reason: "closed".into(),
+            },
+            ToolErrorKind::EditorShutdown {
+                status: "save_required".into(),
+                reason: "unsaved board".into(),
             },
             ToolErrorKind::UnsupportedCapability {
                 capability: "activate_sheet".into(),

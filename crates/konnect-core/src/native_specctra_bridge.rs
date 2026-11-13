@@ -29,11 +29,11 @@ pub(crate) struct NativeExportAttempt {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Registration {
-    protocol_version: u32,
-    pid: u32,
-    address: String,
-    token: String,
+pub(crate) struct Registration {
+    pub(crate) protocol_version: u32,
+    pub(crate) pid: u32,
+    pub(crate) address: String,
+    pub(crate) token: String,
     started_at_unix: f64,
 }
 
@@ -112,14 +112,14 @@ pub(crate) async fn try_export(board: &Path) -> NativeExportAttempt {
     attempt
 }
 
-fn registration_root() -> Option<PathBuf> {
+pub(crate) fn registration_root() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("KONNECT_BRIDGE_DIR") {
         return Some(PathBuf::from(path));
     }
     dirs::data_local_dir().map(|path| path.join("konnect").join("native-bridge"))
 }
 
-fn registrations(root: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn registrations(root: &Path) -> Result<Vec<PathBuf>> {
     if !root.is_dir() {
         return Ok(Vec::new());
     }
@@ -222,7 +222,7 @@ async fn try_registration(
     })
 }
 
-fn validate_registration(registration: &Registration) -> Result<()> {
+pub(crate) fn validate_registration(registration: &Registration) -> Result<()> {
     if registration.protocol_version != PROTOCOL_VERSION
         || registration.pid == 0
         || registration.token.len() < 32

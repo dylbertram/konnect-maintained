@@ -19,13 +19,19 @@ from its two-hour worker auto-stop and 15-minute idle cleanup. Boat supports
 longer detached commands, but that requires executor support; increasing a
 worker's auto-stop does not extend a running job's timeout.
 
+For clean builds within that limit, use the 8 GB `default` worker profile, two
+compiler jobs and disabled incremental compilation. Budget 5.8 GB for that
+workload and require at least 6.3 GB available before starting, including the
+500 MB reserve. A smaller worker needs a separately measured build budget.
+
 ## Cross-sheet transfer acceptance
 
 The CLI-only tests use the installed libraries and disposable project files:
 
 ```bash
 export KONNECT_TEST_KICAD_CLI=/usr/bin/kicad-cli
-export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export KONNECT_BRIDGE_DIR="$PWD/target/native-bridge-tests"
 cargo test --locked -p konnect-core --lib transfer_native_netlist_and_erc_acceptance -- --ignored --nocapture --test-threads=1
 cargo test --locked -p konnect-core --lib transfer_native_public_api_consolidates_both_circuit_groups -- --ignored --nocapture --test-threads=1
 ```
@@ -36,6 +42,12 @@ requires the PCB Editor, so run the group under a private virtual display:
 ```bash
 xvfb-run -a cargo test --locked -p konnect-core --lib transfer_native -- --ignored --nocapture --test-threads=1
 ```
+
+Editor shutdown tests currently require Linux KiCad **10.0.8**. They use the
+opt-in native bridge and public shutdown tools, not keyboard/mouse automation.
+Keep `KONNECT_BRIDGE_DIR` inside the disposable test tree, as above, so failed
+fixtures cannot leave registrations in the worker's normal user data directory.
+See [editor shutdown](EDITOR_SHUTDOWN.md) for version and lifecycle limits.
 
 The tests create synthetic startup-limit and fuse/bypass circuits through the
 public API. They export native netlists and ERC reports, exercise dry-run/apply,

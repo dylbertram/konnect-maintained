@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub fn tools() -> Vec<ToolDef> {
-    vec![
+    let mut tools = vec![
         tool!(
             "create_project",
             "Create a new KiCAD project at the given path. Creates the directory, \
@@ -151,7 +151,9 @@ pub fn tools() -> Vec<ToolDef> {
             }),
             |args, ctx| async move { handle_open_viewer(args, ctx).await }
         ),
-    ]
+    ];
+    tools.extend(super::editor_shutdown::tools());
+    tools
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
