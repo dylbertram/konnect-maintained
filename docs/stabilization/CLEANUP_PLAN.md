@@ -86,47 +86,38 @@ activation, branch protection, release or publication are authorized by this pla
 
 - Prerequisite PR #11 was already merged into remote `main` at `af8d4c4`.
   Imported it into `cleanup/main` at `c3d357f` before accepting any cleanup child.
-  Retained the independently integrated editor-shutdown feature and reconciled
-  documentation counts. Combined-tree verification remains pending.
+  Retained editor shutdown and reconciled the combined catalogue counts.
 - Documentation child `6f77284` passed independent review and Boat job
   `88cc69f6-ccd5-4814-b38f-d1c037ed2707`: four positive regressions passed,
   selector/Muse negative controls failed as expected, and disabled eager loading
   was caught. Merged into the parent at `16bb336`; its clean fully merged branch
   and worktree were removed. Evidence was preserved under the parent.
-- Combined-parent job `4dbd7d05-430a-45e0-a4af-630b13ef495b` exposed remaining
-  stale catalogue totals. Corrected those at `f7a9758`; a fresh integration run
-  is in progress.
-- Board guards `cc88c99` received production source-review approval. Job
-  `80b50482-5619-4335-bf40-e1ab494b46bd` confirmed the review's mock-only failure.
-  Correction `fdbd810` is undergoing positive and negative-control verification.
-- Read identities `489a462` received independent source-review approval.
-  Additional CLI worker `bx_nek5s6r8` failed before tests due to its isolated
-  Rust toolchain environment. Its deletion operation
-  `bdop_6ce1b8d27fe0448fa6b0d189811b6aa7` completed, and the local sanitized
-  transfer copy was removed. No test success is claimed from this attempt.
-- The next bounded export child starts from the updated parent, including PR #11.
 - Board guards passed job `4f0c78f6-1b93-4180-abcb-799f88b00157`, including
   missing-guard negative control, writer tests and Clippy. Merged at `4bb3d66`.
 - Read identities passed job `3f040888-6cca-467b-9949-91b797f71b16`, including
   failing-before and mutation controls. Merged at `b1c0b3c`.
-  Both completed child branches/worktrees were removed; evidence is in the parent.
-- Full combined-parent tests and Clippy passed on `f7a9758`; doctests could not
-  start because the executor lacked a `rustdoc` executable-path entry.
-  A new combined-parent run includes both accepted fixes and explicit rustdoc
-  discovery. Doctests/Python results remain pending.
 - Reusable no-secret Boat image `konnect-rust-1-96` is ready at snapshot
   `2654d199-a5cb-4aa6-b7f4-6204d76085d9`. Rust, Cargo and rustdoc report 1.96.0;
   an actual rustdoc smoke test passed. The source-free image builder sandbox was
   deleted, with completed operation `bdop_f23069362a4d491e816546b21b4dacd8`.
   Existing executor images are not claimed changed by saving this snapshot.
-- Export acceptance corrections remain in progress after review.
-  New bounded children cover private fields and routed foreign-net protection.
 - Combined gate `275343da-a26a-4628-8743-88ae2c4d271d` passed on `b1c0b3c`:
   workspace tests, Clippy, doctests and Python suites. Nine existing Kata records
   are closed with typed evidence. Historical PR-review record `7enh` remains open
   for a superseded disposition; its optional runtime hint was not adopted, and
   Kata rejected the superseded-close evidence arguments. The original report
   `mvy5` is complete.
-- Export job `f90f80f1-8740-42dc-8736-04d39bdf1993` completed native provisioning
-  but stopped at the formatting gate. Formatting-only corrections are pending
-  before testing; no native artifact success is claimed.
+- Exports `32bd120` passed independent review, native KiCad/Poppler artifacts,
+  lifecycle checks and dispatch/default-layer controls in job
+  `9caeddf2-5a53-4380-9211-b467ae8be17b`. Merged at `410675b`.
+  Full combined-parent verification including exports is running.
+- Every accepted child above has been merged; its clean branch/worktree was
+  removed. Failed and successful remote evidence is retained in the parent.
+- Route candidate `54f3afe` passed focused suites but its generated native
+  schematic was rejected in job `2fe4fbfa-2b08-4202-8286-22c3bab65de2`.
+  Fixture and subprocess-lifecycle corrections are required before acceptance.
+  Private fields await bounded native capture and five mutation controls.
+- Active implementation children are routes, private fields and the qualified
+  library-field foundation. No additional branch is needed for source review.
+- The failed CLI test worker deletion completed at
+  `bdop_6ce1b8d27fe0448fa6b0d189811b6aa7`; its local transfer copy was removed.
