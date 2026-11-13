@@ -110,14 +110,41 @@ activation, branch protection, release or publication are authorized by this pla
 - Exports `32bd120` passed independent review, native KiCad/Poppler artifacts,
   lifecycle checks and dispatch/default-layer controls in job
   `9caeddf2-5a53-4380-9211-b467ae8be17b`. Merged at `410675b`.
-  Full combined-parent verification including exports is running.
+  Export-inclusive parent `ecc6e42` passed the full combined gate on
+  `bx_5k54nmcv`, stages 1 and 2.
+- Private fields `cab73ea` passed four model tests, eight served tests,
+  native KiCad 10.0.8 resave/readback and five rejected mutation controls
+  with restored positives on `bx_e7n7qrw3`. Merged at `ac4c4823`.
+  Public exhaustive Rust `Property` literals/destructuring need migration;
+  constructors and tool schemas retain compatibility. See `API_MIGRATIONS.md`.
+- Private-inclusive parent `ac4c4823` passed formatting, workspace tests,
+  Clippy with warnings denied, doctests, 18 plugin tests, nine script tests,
+  native supervisor/export acceptance and native private resave/readback.
+  Boat command `cmd_i6nxiw2fjkpi` exited 0 on `bx_5k54nmcv`; source archive
+  SHA-256 is `dd31946dcf39a0f869f270327ed203d7d2054feef2055707d280d6f3d8c7cc93`.
+  Full logs and native artifacts are retained under
+  `.remote-build-jobs/boat-parent-verification/`.
+  Fourteen Kata records are now closed with typed evidence, including
+  exports `pe7h/459k/xsd6` and private fields `27jb/we5v`.
+  The `mvy5` closure's plugin count was corrected to 18 in a comment.
 - Every accepted child above has been merged; its clean branch/worktree was
   removed. Failed and successful remote evidence is retained in the parent.
 - Route candidate `54f3afe` passed focused suites but its generated native
   schematic was rejected in job `2fe4fbfa-2b08-4202-8286-22c3bab65de2`.
-  Fixture and subprocess-lifecycle corrections are required before acceptance.
-  Private fields await bounded native capture and five mutation controls.
-- Active implementation children are routes, private fields and the qualified
-  library-field foundation. No additional branch is needed for source review.
+  Correction `ba53ecb` adds complete native-instance cloning, independent
+  process supervision and captured inputs/outputs. Candidate `9f5d69ad`
+  incorporates parent `ac4c4823`; verification is running on `bx_fv2c2jjy`,
+  command `cmd_ramcfajlbuhk`. Native acceptance and controls remain pending.
+- Active implementation children are routes and the library-field foundation.
+  Foundation `95e9d23` is not accepted. Review requires absent/default-zero
+  thickness normalization and a genuine native upright-operation oracle.
+  Preserve its uncommitted corrections and `origin/fix/789-library-fields`
+  at `63123625` until the replacement is verified and merged.
+- All four retained Dependabot branches were audited against the parent.
+  None is incorporated or demonstrably superseded; preserve them. Findings
+  are recorded on existing Kata `f0kv`.
+- Private worker deletion completed at
+  `bdop_937517fce2e74c88b8a8e135b51391ab`; parent worker deletion completed
+  at `bdop_a67a53a9da904598aa535402d17f612c`, after evidence retrieval.
 - The failed CLI test worker deletion completed at
   `bdop_6ce1b8d27fe0448fa6b0d189811b6aa7`; its local transfer copy was removed.
