@@ -1,5 +1,5 @@
-//! What a library footprint carries besides its pads, drawings and fields,
-//! read into the typed messages KiCad's API takes.
+//! Library footprint fields, attributes and models, read into the typed
+//! messages KiCad's API takes.
 //!
 //! Shared by `update_pcb_from_schematic`, which places new footprints, and
 //! `update_footprints_from_library`, which refreshes placed ones, so both put
@@ -10,6 +10,382 @@
 use anyhow::{bail, Context, Result};
 use konnect_ipc::gen::kiapi;
 use konnect_sexp::SexpNode;
+use std::collections::BTreeSet;
+
+/// Library-local typed fields. Mandatory fields may contain only a value in
+/// older files; refresh keeps those values without resetting placed presentation.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LibraryProperties {
+    pub(crate) reference: Option<kiapi::board::types::Field>,
+    pub(crate) value: Option<kiapi::board::types::Field>,
+    pub(crate) datasheet: Option<kiapi::board::types::Field>,
+    pub(crate) description: Option<kiapi::board::types::Field>,
+    pub(crate) datasheet_value: Option<String>,
+    pub(crate) description_value: Option<String>,
+    pub(crate) custom: Vec<kiapi::board::types::Field>,
+}
+
+/// One property reader for sync additions and library refresh. Unknown clauses
+/// and repeated names refuse rather than silently dropping authored data.
+pub(crate) fn properties(root: &SexpNode) -> Result<LibraryProperties> {
+    let mut names = BTreeSet::new();
+    let mut properties = LibraryProperties::default();
+    for node in root.find_all("property") {
+        let name = node
+            .get(1)
+            .and_then(SexpNode::as_str)
+            .context("property is missing its name")?;
+        if !names.insert(name.to_string()) {
+            bail!("property '{name}' appears more than once in the library footprint");
+        }
+        let mandatory = matches!(name, "Reference" | "Value" | "Datasheet" | "Description");
+        let parsed = property(node, !mandatory)?;
+        let value = node
+            .get(2)
+            .and_then(SexpNode::as_str)
+            .with_context(|| format!("property '{name}' is missing its value"))?;
+        match name {
+            "Reference" => properties.reference = parsed,
+            "Value" => properties.value = parsed,
+            "Datasheet" => {
+                properties.datasheet = parsed;
+                properties.datasheet_value = Some(value.to_string());
+            }
+            "Description" => {
+                properties.description = parsed;
+                properties.description_value = Some(value.to_string());
+            }
+            _ => properties
+                .custom
+                .push(parsed.context("custom property did not produce a typed field")?),
+        }
+    }
+    Ok(properties)
+}
+
+/// `(unlocked yes)` disables keep-upright. It is not the field's lock.
+/// The separate `(locked …)` clause remains unsupported and is refused.
+fn property(
+    property: &SexpNode,
+    require_typed_field: bool,
+) -> Result<Option<kiapi::board::types::Field>> {
+    use kiapi::common::types::LockedState;
+
+    let name = property
+        .get(1)
+        .and_then(SexpNode::as_str)
+        .context("property is missing its name")?;
+    let value = property
+        .get(2)
+        .and_then(SexpNode::as_str)
+        .with_context(|| format!("property '{name}' is missing its value"))?;
+    let mut position = None;
+    let mut rotation = 0.0;
+    let mut layer = None;
+    let mut hidden = None;
+    let mut knockout = None;
+    let mut unlocked = None;
+    let mut attributes = None;
+    let mut identifier = None;
+    for clause in property.children().unwrap_or_default().iter().skip(3) {
+        let tag = clause
+            .head()
+            .with_context(|| format!("property '{name}' contains an unsupported atom"))?;
+        match tag {
+            "at" => {
+                if position.is_some() {
+                    bail!("property '{name}' contains duplicate 'at' clauses");
+                }
+                let count = clause.children().map_or(0, |children| children.len());
+                if !matches!(count, 3 | 4) {
+                    bail!("property '{name}' 'at' must contain x, y, and optional rotation");
+                }
+                let x = clause
+                    .get_f64(1)
+                    .with_context(|| format!("property '{name}' has an invalid X position"))?;
+                let y = clause
+                    .get_f64(2)
+                    .with_context(|| format!("property '{name}' has an invalid Y position"))?;
+                rotation = clause.get_f64(3).unwrap_or(0.0);
+                if !x.is_finite() || !y.is_finite() || !rotation.is_finite() {
+                    bail!("property '{name}' position and rotation must be finite");
+                }
+                position = Some(konnect_ipc::builders::vec2(x, y));
+            }
+            "layer" => {
+                if layer.is_some() {
+                    bail!("property '{name}' contains duplicate 'layer' clauses");
+                }
+                let layer_name = clause
+                    .get(1)
+                    .and_then(SexpNode::as_str)
+                    .filter(|name| !name.is_empty())
+                    .with_context(|| format!("property '{name}' has no layer name"))?;
+                if clause.children().map_or(0, |children| children.len()) != 2 {
+                    bail!("property '{name}' 'layer' must name exactly one layer");
+                }
+                layer = Some(
+                    konnect_ipc::builders::try_layer_from_name(layer_name)
+                        .with_context(|| format!("property '{name}' has an unsupported layer"))?
+                        as i32,
+                );
+            }
+            "hide" => {
+                if hidden.is_some() {
+                    bail!("property '{name}' contains duplicate 'hide' clauses");
+                }
+                hidden = Some(yes_no(clause, name, "hide")?);
+            }
+            "knockout" => {
+                if knockout.is_some() {
+                    bail!("property '{name}' contains duplicate 'knockout' clauses");
+                }
+                knockout = Some(yes_no(clause, name, "knockout")?);
+            }
+            "unlocked" => {
+                if unlocked.is_some() {
+                    bail!("property '{name}' contains duplicate 'unlocked' clauses");
+                }
+                unlocked = Some(yes_no(clause, name, "unlocked")?);
+            }
+            "uuid" | "tstamp" => {
+                if let Some(previous) = identifier {
+                    bail!(
+                        "property '{name}' contains multiple identifier clauses ('{previous}' and '{tag}')"
+                    );
+                }
+                identifier = Some(tag);
+                if clause.children().map_or(0, |children| children.len()) != 2
+                    || clause
+                        .get(1)
+                        .and_then(SexpNode::as_str)
+                        .is_none_or(str::is_empty)
+                {
+                    bail!("property '{name}' '{tag}' must contain exactly one identifier");
+                }
+            }
+            "effects" => {
+                if attributes.is_some() {
+                    bail!("property '{name}' contains duplicate 'effects' clauses");
+                }
+                attributes = Some(property_effects(clause, name)?);
+            }
+            unsupported => {
+                bail!("property '{name}' clause '{unsupported}' is not supported losslessly")
+            }
+        }
+    }
+    if !require_typed_field && (position.is_none() || layer.is_none() || attributes.is_none()) {
+        return Ok(None);
+    }
+    let position =
+        position.with_context(|| format!("property '{name}' is missing its 'at' clause"))?;
+    let layer =
+        layer.with_context(|| format!("property '{name}' is missing its 'layer' clause"))?;
+    let mut attributes =
+        attributes.with_context(|| format!("property '{name}' is missing its 'effects' clause"))?;
+    attributes.angle = Some(kiapi::common::types::Angle {
+        value_degrees: rotation,
+    });
+    attributes.keep_upright = !unlocked.unwrap_or(false);
+    Ok(Some(kiapi::board::types::Field {
+        id: None,
+        name: name.to_string(),
+        text: Some(kiapi::board::types::BoardText {
+            // Library child identifiers must not be reused on the board.
+            id: None,
+            text: Some(kiapi::common::types::Text {
+                position: Some(position),
+                attributes: Some(attributes),
+                text: value.to_string(),
+                hyperlink: String::new(),
+            }),
+            layer,
+            knockout: knockout.unwrap_or(false),
+            locked: LockedState::LsUnlocked as i32,
+            parent: None,
+        }),
+        visible: !hidden.unwrap_or(false),
+    }))
+}
+
+fn yes_no(clause: &SexpNode, name: &str, tag: &str) -> Result<bool> {
+    if clause.children().map_or(0, |children| children.len()) != 2 {
+        bail!("property '{name}' '{tag}' must contain exactly one yes/no value");
+    }
+    match clause.get(1).and_then(SexpNode::as_str) {
+        Some("yes") => Ok(true),
+        Some("no") => Ok(false),
+        _ => bail!("property '{name}' '{tag}' must be yes or no"),
+    }
+}
+
+fn property_effects(
+    effects: &SexpNode,
+    name: &str,
+) -> Result<kiapi::common::types::TextAttributes> {
+    use kiapi::common::types::{HorizontalAlignment, VerticalAlignment};
+
+    let mut font = None;
+    let mut horizontal = HorizontalAlignment::HaCenter;
+    let mut vertical = VerticalAlignment::VaCenter;
+    let mut mirrored = false;
+    for clause in effects.children().unwrap_or_default().iter().skip(1) {
+        let tag = clause
+            .head()
+            .with_context(|| format!("property '{name}' effects contain an unsupported atom"))?;
+        match tag {
+            "font" => {
+                if font.replace(clause).is_some() {
+                    bail!("property '{name}' contains duplicate font clauses");
+                }
+            }
+            "justify" => {
+                for value in clause.children().unwrap_or_default().iter().skip(1) {
+                    match value.as_str().with_context(|| {
+                        format!("property '{name}' justify contains a non-atom")
+                    })? {
+                        "left" if horizontal == HorizontalAlignment::HaCenter => {
+                            horizontal = HorizontalAlignment::HaLeft
+                        }
+                        "right" if horizontal == HorizontalAlignment::HaCenter => {
+                            horizontal = HorizontalAlignment::HaRight
+                        }
+                        "top" if vertical == VerticalAlignment::VaCenter => {
+                            vertical = VerticalAlignment::VaTop
+                        }
+                        "bottom" if vertical == VerticalAlignment::VaCenter => {
+                            vertical = VerticalAlignment::VaBottom
+                        }
+                        "mirror" if !mirrored => mirrored = true,
+                        "left" | "right" => bail!(
+                            "property '{name}' has conflicting horizontal justification"
+                        ),
+                        "top" | "bottom" => {
+                            bail!("property '{name}' has conflicting vertical justification")
+                        }
+                        "mirror" => bail!("property '{name}' repeats mirrored justification"),
+                        unsupported => bail!(
+                            "property '{name}' justification '{unsupported}' is not supported losslessly"
+                        ),
+                    }
+                }
+            }
+            unsupported => bail!(
+                "property '{name}' effects clause '{unsupported}' is not supported losslessly"
+            ),
+        }
+    }
+    let font =
+        font.with_context(|| format!("property '{name}' effects are missing the font clause"))?;
+    let mut font_name = String::new();
+    let mut size = None;
+    let mut thickness = None;
+    let mut bold = None;
+    let mut italic = None;
+    let mut line_spacing = None;
+    for clause in font.children().unwrap_or_default().iter().skip(1) {
+        let tag = clause
+            .head()
+            .with_context(|| format!("property '{name}' font contains an unsupported atom"))?;
+        match tag {
+            "face" => {
+                if !font_name.is_empty() {
+                    bail!("property '{name}' contains duplicate font face clauses");
+                }
+                font_name = clause
+                    .get(1)
+                    .and_then(SexpNode::as_str)
+                    .filter(|face| !face.is_empty())
+                    .with_context(|| format!("property '{name}' font face is invalid"))?
+                    .to_string();
+            }
+            "size" => {
+                if size.is_some() {
+                    bail!("property '{name}' contains duplicate font size clauses");
+                }
+                if clause.children().map_or(0, |children| children.len()) != 3 {
+                    bail!("property '{name}' font size must contain width and height");
+                }
+                let width = clause
+                    .get_f64(1)
+                    .with_context(|| format!("property '{name}' font width is invalid"))?;
+                let height = clause
+                    .get_f64(2)
+                    .with_context(|| format!("property '{name}' font height is invalid"))?;
+                if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+                    bail!("property '{name}' font size must be finite and positive");
+                }
+                size = Some((width, height));
+            }
+            "thickness" => {
+                if thickness.is_some() {
+                    bail!("property '{name}' contains duplicate font thickness clauses");
+                }
+                let value = clause
+                    .get_f64(1)
+                    .with_context(|| format!("property '{name}' font thickness is invalid"))?;
+                if clause.children().map_or(0, |children| children.len()) != 2
+                    || !value.is_finite()
+                    || value <= 0.0
+                {
+                    bail!("property '{name}' font thickness must be finite and positive");
+                }
+                thickness = Some(value);
+            }
+            "bold" => {
+                if bold.is_some() {
+                    bail!("property '{name}' contains duplicate font 'bold' clauses");
+                }
+                bold = Some(yes_no(clause, name, "font bold")?);
+            }
+            "italic" => {
+                if italic.is_some() {
+                    bail!("property '{name}' contains duplicate font 'italic' clauses");
+                }
+                italic = Some(yes_no(clause, name, "font italic")?);
+            }
+            "line_spacing" => {
+                if line_spacing.is_some() {
+                    bail!("property '{name}' contains duplicate font 'line_spacing' clauses");
+                }
+                let value = clause
+                    .get_f64(1)
+                    .with_context(|| format!("property '{name}' line spacing is invalid"))?;
+                if clause.children().map_or(0, |children| children.len()) != 2
+                    || !value.is_finite()
+                    || value <= 0.0
+                {
+                    bail!("property '{name}' line spacing must be finite and positive");
+                }
+                line_spacing = Some(value);
+            }
+            unsupported => {
+                bail!("property '{name}' font clause '{unsupported}' is not supported losslessly")
+            }
+        }
+    }
+    let (width, height) =
+        size.with_context(|| format!("property '{name}' font is missing its size"))?;
+    Ok(kiapi::common::types::TextAttributes {
+        font_name,
+        horizontal_alignment: horizontal as i32,
+        vertical_alignment: vertical as i32,
+        angle: None,
+        line_spacing: line_spacing.unwrap_or(1.0),
+        stroke_width: Some(konnect_ipc::builders::distance(
+            thickness.unwrap_or(width * 0.15),
+        )),
+        italic: italic.unwrap_or(false),
+        bold: bold.unwrap_or(false),
+        underlined: false,
+        visible: true,
+        mirrored,
+        multiline: false,
+        keep_upright: false,
+        size: Some(konnect_ipc::builders::vec2(width, height)),
+    })
+}
 
 /// The instance attributes a library footprint's `(attr …)` declares.
 ///
@@ -146,6 +522,58 @@ mod tests {
 
     fn root(source: &str) -> SexpNode {
         konnect_sexp::parse_sexp(source).unwrap()
+    }
+
+    #[test]
+    fn a6_properties_keep_native_presentation_and_upright_is_not_a_lock() {
+        use kiapi::board::types::BoardLayer;
+        use kiapi::common::types::LockedState;
+        let fields = properties(&root(C_0603)).unwrap();
+        let reference = fields.reference.unwrap();
+        let value = fields.value.unwrap();
+        assert_eq!(
+            reference.text.as_ref().unwrap().layer,
+            BoardLayer::BlFSilkS as i32
+        );
+        assert_eq!(
+            value.text.as_ref().unwrap().layer,
+            BoardLayer::BlFFab as i32
+        );
+        assert!(value.visible);
+        let attrs = |f: kiapi::board::types::Field| {
+            let board_text = f.text.unwrap();
+            assert_eq!(board_text.locked, LockedState::LsUnlocked as i32);
+            board_text.text.unwrap().attributes.unwrap()
+        };
+        let attributes = attrs(reference);
+        assert!(attributes.keep_upright);
+        assert_eq!(attributes.stroke_width.unwrap().value_nm, 150_000);
+        assert_eq!(attributes.line_spacing, 1.0);
+        assert_eq!(fields.custom.len(), 1);
+        assert!(!fields.custom[0].visible);
+        assert_eq!(fields.custom[0].name, "KiLib_Generator");
+        for (clause, upright) in [
+            ("", true),
+            ("(unlocked no)", true),
+            ("(unlocked yes)", false),
+        ] {
+            let source = C_0603.replacen("(at 0 -1.43 0)", &format!("(at 0 -1.43 0) {clause}"), 1);
+            assert_eq!(
+                attrs(properties(&root(&source)).unwrap().reference.unwrap()).keep_upright,
+                upright
+            );
+        }
+        for clause in [
+            "(unlocked maybe)",
+            "(unlocked)",
+            "(unlocked yes no)",
+            "(unlocked yes) (unlocked no)",
+            "(locked yes)",
+            "(locked no)",
+        ] {
+            let source = C_0603.replacen("(at 0 -1.43 0)", &format!("(at 0 -1.43 0) {clause}"), 1);
+            assert!(properties(&root(&source)).is_err(), "{clause}");
+        }
     }
 
     /// The KiCad-written 0603 capacitor: `(attr smd)`, its description and

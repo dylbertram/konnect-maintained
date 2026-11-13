@@ -140,7 +140,7 @@ activation, branch protection, release or publication are authorized by this pla
   SHA-256 is `dd31946dcf39a0f869f270327ed203d7d2054feef2055707d280d6f3d8c7cc93`.
   Full logs and native artifacts are retained under
   `.remote-build-jobs/boat-parent-verification/`.
-  Fourteen Kata records are now closed with typed evidence, including
+  At that checkpoint, fourteen Kata records were closed with typed evidence, including
   exports `pe7h/459k/xsd6` and private fields `27jb/we5v`.
   The `mvy5` closure's plugin count was corrected to 18 in a comment.
 - Every accepted child above has been merged; its clean branch/worktree was
@@ -158,30 +158,46 @@ activation, branch protection, release or publication are authorized by this pla
   Native guard/local-T controls proved the expected accidental joins from
   captured netlists; restored native checks passed. Merged at `7a01c94`;
   its clean fully merged branch/worktree was removed. Full combined-parent
-  verification runs in `cmd_atizatpurxez`.
-- Active implementation children are library-field foundation and text
-  preservation. Foundation `d612c964` passes independent source review,
-  focused suites, workspace Clippy and debug build in `cmd_tabivfq0xhab`.
-  It normalizes protobuf-zero defaults and uses native Rotate controls.
-  Native acceptance stopped before production on a missing design-block
-  template; portable disposable configuration is being corrected.
-  All 12 mutation controls passed with nine restored positives in
-  `cmd_tymm5zspprdn`. Later helper-only corrections reached passing native
-  sync/refresh comparisons on `d17297a`, but temporary HOME cleanup failed
-  on a busy GVFS mount. That gate remains failed, with artifacts retained;
-  fix lifecycle isolation rather than ignore cleanup errors. Preserve
-  `origin/fix/789-library-fields` at `63123625` until the replacement is
-  verified and merged. `z705` remains partial; A7/A8 are separate.
-- Text preservation `174e/pdps` is qualified against current source. The user
+  verification passed in `cmd_atizatpurxez`; `qe1n/mta5` are closed.
+  Route worker deletion completed at `bdop_741706b307634b17bd4eea202e5ee364`.
+- Text preservation `174e/pdps` is verified and closed. The user
   explicitly approved a documented public Rust `Text` source break while
   preserving `Text::new` and tool schemas. Native LF fixture capture in
   `cmd_wk7jitojaaxx` passed supervised KiCad 10.0.8 upgrade and netlist export,
   with no newline normalization. Native SHA-256 is
   `1bbd268c32a780f2314fb0a280405be92800086ff2ac1a5cf50b15f5ca266398`.
-  Exact unchanged text-block acceptance is required, not whole-file identity.
-  Candidate `f993014` passes source review, formatting, focused tests,
+  Exact unchanged text blocks are verified, not whole-file identity.
+  Candidate `f993014` passed source review, formatting, focused tests,
   workspace Clippy and supervised native acceptance in `cmd_f62jiv6ac6xm`.
-  Failing-before and mutation controls run in `cmd_1vxkborslixt`.
+  Failing-before and six controls passed in `cmd_1vxkborslixt`.
+  Merged at `7677915`; the clean merged child was removed.
+  Its first full parent gate exited 0, but the worker expired during a user
+  choice before full logs/captures were retrieved. Those artifacts are not
+  claimed recovered. Fresh verification of the same source
+  `49a221f5bd411a9c4fc6555079f61a051134a30391c31485ddcde3871f7c4a33`
+  passed in `cmd_vjcwbyscnsv3` and `cmd_oixybansfavq`, with full evidence retained
+  under `.remote-build-jobs/boat-retained-parent-verification/`.
+- Field foundation `04f5d81` merged at `d9b33fd`, with identical Git tree
+  `d62775f731a20033722a368a30c7c213109494dc` and source archive
+  `0e439fdc4856363d8091320e6f6fcba4f584bf8c1bb8d692cb5abfd1ef52994f`.
+  All 12 controls passed on unchanged production, with nine restored positives.
+  Fresh native KiCad 10.0.8 field/lifecycle acceptance passed in
+  `cmd_t20f2y8csku2`; combined candidate checks passed in
+  `cmd_bfx0jxxpnlh7` and `cmd_bgglg6xp2w6k`. Post-merge
+  `cmd_qxtdapc6scme` passed workspace checks and native field/root cleanup.
+  Logs, native comparisons and independent root-absence proofs are retained in
+  `.remote-build-jobs/boat-field-lifecycle-verification/`.
+  Earlier setup/GVFS-cleanup failures remain failed; no shared services were
+  killed or unmounted. The clean merged child was removed. `annz` is closed;
+  `z705`, A7/A8 and stroke/no-op work remain open.
+- Independent four-file audit found `origin/fix/789-library-fields` fully
+  superseded. After native/parent acceptance, its remote SHA was rechecked at
+  `63123625e1e4512cdca3cce1ac5ab4997db3ee4d` and deletion used an exact-SHA
+  lease. The subsequent remote query confirmed absence.
+- Nineteen original Kata records are now closed with evidence. Active symbol
+  serialization work is `qpq3/4nj5`. The user approved preserving raw syntax
+  unless its existing bool is deliberately changed, then emitting canonical
+  yes/no. No new public `Symbol` fields are authorized or needed.
 - All four retained Dependabot branches were audited against the parent.
   None is incorporated or demonstrably superseded; preserve them. Findings
   are recorded on existing Kata `f0kv`.

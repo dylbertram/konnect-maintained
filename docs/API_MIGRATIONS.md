@@ -36,6 +36,39 @@ fixture, not whole-file or older-format byte identity. No point wrapping, Sheet,
 label, Text or generic-writer changes are included. Verification is coordinator
 owned and remains pending. See `docs/stabilization/SYMBOL_SERIALIZATION.md`.
 
+## Unreleased: schematic sync additions carry library fields
+
+`update_pcb_from_schematic` additions now carry the library's Reference/Value
+presentation, Datasheet, Description and custom properties. Reference and Value
+text still come from the schematic. A visible property is carried once as a
+field, not also drawn as ordinary text.
+
+If properties cannot be represented, the addition still uses the previous
+template fields and graphics. Both dry run and apply report
+`library_fields_not_carried`, with footprint, references and reason, even for
+an unsupported hidden property. Partial mandatory-field presentation also takes
+this diagnostic fallback rather than silently losing a nonempty field value.
+
+The shared library-property reader accepts `(unlocked yes|no)` as KiCad's
+keep-upright flag, not a lock. Fields remain unlocked; separate `(locked …)`,
+unknown clauses and repeated names remain refused by library refresh.
+Non-upright field angles retain their full-turn-normalized raw angle, including
+180°, after front/back transforms. Upright folding is unchanged.
+
+After a sync commit, `board_readback_differs` also reports lost or changed sent
+fields, including raw angle and thickness returned by live KiCad. It is a
+post-commit diagnostic, not a claim that the mutation was rolled back.
+An omitted angle or stroke-width message compares as its protobuf zero value,
+not as a loss when KiCad materializes the default. Nonzero thickness changes
+remain observable.
+
+This does not adopt library presentation for direct `place_component`, reset
+placed Reference/Value during refresh, propagate schematic custom fields or
+expand existing-footprint sync updates. Board-default field styling is not
+followed. Stroke/no-op convergence and A8 whole-footprint child preservation
+remain separate work. See `docs/stabilization/LIBRARY_FIELDS.md` for the
+coordinator-owned native gate and remaining #789 acceptance.
+
 ## Unreleased: Rust schematic text retains simulation exclusion and unknown children
 
 `konnect_schematic_editor::Text` adds public fields

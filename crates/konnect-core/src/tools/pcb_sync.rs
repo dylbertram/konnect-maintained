@@ -289,6 +289,8 @@ struct PreparedFootprint {
     /// footprint definition.
     description_and_keywords: konnect_ipc::gen::kiapi::board::types::FootprintAttributes,
     models: Vec<konnect_ipc::gen::kiapi::board::types::Footprint3DModel>,
+    /// Presentation failures do not prevent an otherwise supported addition.
+    library_fields: std::result::Result<super::library_footprint::LibraryProperties, String>,
     width: f64,
     height: f64,
 }
@@ -394,6 +396,7 @@ pub(crate) async fn handle_update_pcb_from_schematic(
             }
             restage_additions(&mut plan, &prepared, snapshot.state.bounds);
             refresh_revision_with_staging(&mut plan);
+            plan.diagnostics.extend(library_fields_not_carried(&plan, &prepared));
 
             if dry_run || plan.status == PlanStatus::Conflict {
                 let status = match plan.status {
@@ -1319,13 +1322,57 @@ fn apply_footprint_fields(
 /// graphic became a pad, so pads went up by exactly the number of drawings, and
 /// drawings went to zero. The attributes and models are what #789's sync used
 /// to leave off.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 struct FootprintShape {
     pads: usize,
     drawings: usize,
     attributes: AttributeSet,
     /// Sorted, so the comparison does not depend on the order KiCad lists them.
     model_files: Vec<String>,
+    fields: BTreeMap<String, FieldShape>,
+}
+
+/// Compare the fields KiCad actually reports, not a copy of the outgoing item.
+/// Raw angles are equivalent only by full turns, never by a readable 180° fold.
+#[derive(Debug, Clone, PartialEq)]
+struct FieldShape {
+    text: String,
+    layer: i32,
+    visible: bool,
+    upright: bool,
+    angle: f64,
+    thickness_nm: i64,
+}
+
+impl FieldShape {
+    fn matches(&self, other: &Self) -> bool {
+        self.text == other.text
+            && self.layer == other.layer
+            && self.visible == other.visible
+            && self.upright == other.upright
+            && self.angle == other.angle
+            && self.thickness_nm == other.thickness_nm
+    }
+
+    fn of(field: &konnect_ipc::gen::kiapi::board::types::Field) -> Self {
+        let board_text = field.text.as_ref();
+        let text = board_text.and_then(|text| text.text.as_ref());
+        let attributes = text.and_then(|text| text.attributes.as_ref());
+        Self {
+            text: text.map(|text| text.text.clone()).unwrap_or_default(),
+            layer: board_text.map(|text| text.layer).unwrap_or_default(),
+            visible: field.visible,
+            upright: attributes.is_some_and(|attributes| attributes.keep_upright),
+            angle: attributes
+                .and_then(|attributes| attributes.angle.as_ref())
+                .map_or(0.0, |angle| angle.value_degrees.rem_euclid(360.0)),
+            // EDA_TEXT::Deserialize reads an absent Distance as zero;
+            // Serialize always emits that Distance. Presence is not a change.
+            thickness_nm: attributes
+                .and_then(|attributes| attributes.stroke_width.as_ref())
+                .map_or(0, |width| width.value_nm),
+        }
+    }
 }
 
 /// Every instance attribute KiCad reports for a footprint, named by the
@@ -1409,6 +1456,16 @@ fn footprint_shapes<'a>(
             attributes: AttributeSet::of(footprint.attributes.as_ref()),
             ..Default::default()
         };
+        for (name, field) in [
+            ("Reference", &footprint.reference_field),
+            ("Value", &footprint.value_field),
+            ("Datasheet", &footprint.datasheet_field),
+            ("Description", &footprint.description_field),
+        ] {
+            if let Some(field) = field {
+                shape.fields.insert(name.to_string(), FieldShape::of(field));
+            }
+        }
         for child in &definition.items {
             match konnect_ipc::builders::any_type_name(child) {
                 "kiapi.board.types.Pad" => shape.pads += 1,
@@ -1420,6 +1477,13 @@ fn footprint_shapes<'a>(
                         kiapi::board::types::Footprint3DModel::decode(child.value.as_slice())
                     {
                         shape.model_files.push(model.filename);
+                    }
+                }
+                "kiapi.board.types.Field" => {
+                    if let Ok(field) = kiapi::board::types::Field::decode(child.value.as_slice()) {
+                        shape
+                            .fields
+                            .insert(field.name.clone(), FieldShape::of(&field));
                     }
                 }
                 _ => {}
@@ -1499,6 +1563,16 @@ fn verify_board_matches_what_was_sent(
                 want.model_files.join(", "),
                 got.model_files.join(", ")
             ));
+        }
+        // KiCad may create empty mandatory fields we did not send. They are
+        // not losses; compare only the fields this mutation actually carried.
+        for (name, sent) in &want.fields {
+            if got.fields.get(name).is_none_or(|kept| !sent.matches(kept)) {
+                suspicious.push(format!(
+                    "{reference}: sent field {name} as {sent:?}, board now has {:?}",
+                    got.fields.get(name)
+                ));
+            }
         }
     }
     if !corrupted.is_empty() {
@@ -1993,8 +2067,6 @@ fn prepare_footprint_source(
     let unsupported =
         |error: anyhow::Error| ("unsupported_library_footprint", format!("{error:#}"));
     let pads = super::pcb_components::extract_pad_definitions(source).map_err(unsupported)?;
-    let graphics =
-        super::pcb_components::extract_graphic_definitions(source).map_err(unsupported)?;
     let fields = super::pcb_components::extract_field_placement(source);
     // Read with the same readers `update_footprints_from_library` uses, so a
     // footprint the sync places carries what a refresh would give it (#789).
@@ -2004,6 +2076,33 @@ fn prepare_footprint_source(
     let attributes = super::library_footprint::attributes(&root).map_err(unsupported)?;
     let description_and_keywords = super::library_footprint::description_and_keywords(&root);
     let models = super::library_footprint::models(&root).map_err(unsupported)?;
+    let library_fields = super::library_footprint::properties(&root)
+        .and_then(|fields| {
+            // A partial mandatory field has a value but no representable
+            // presentation. Do not silently claim to have carried that value.
+            for (name, typed) in [
+                ("Reference", fields.reference.is_some()),
+                ("Value", fields.value.is_some()),
+                ("Datasheet", fields.datasheet.is_some()),
+                ("Description", fields.description.is_some()),
+            ] {
+                let present = root
+                    .find_all("property")
+                    .iter()
+                    .any(|property| property.get(1).and_then(SexpNode::as_str) == Some(name));
+                if present && !typed {
+                    bail!("property '{name}' has no complete typed presentation");
+                }
+            }
+            Ok(fields)
+        })
+        .map_err(|error| format!("{error:#}"));
+    let graphics = if library_fields.is_ok() {
+        super::pcb_components::extract_graphic_definitions_without_properties(source)
+    } else {
+        super::pcb_components::extract_graphic_definitions(source)
+    }
+    .map_err(unsupported)?;
     let (width, height) = footprint_dimensions(&pads, &graphics);
     Ok(PreparedFootprint {
         pads,
@@ -2012,6 +2111,7 @@ fn prepare_footprint_source(
         attributes,
         description_and_keywords,
         models,
+        library_fields,
         width,
         height,
     })
@@ -2040,7 +2140,104 @@ fn apply_library_data(
             konnect_ipc::builders::pack_any(model, "kiapi.board.types.Footprint3DModel")
         }),
     );
+    if let Ok(fields) = &part.library_fields {
+        apply_library_fields(footprint, fields)?;
+    }
     Ok(())
+}
+
+/// Only additions adopt library field presentation. Existing sync updates and
+/// refresh's preserved Reference/Value presentation are not widened here.
+fn apply_library_fields(
+    footprint: &mut konnect_ipc::gen::kiapi::board::types::FootprintInstance,
+    fields: &super::library_footprint::LibraryProperties,
+) -> Result<()> {
+    let position = footprint
+        .position
+        .context("built footprint has no position")?;
+    let rotation = footprint
+        .orientation
+        .as_ref()
+        .map(|a| a.value_degrees)
+        .unwrap_or(0.0);
+    let place = |field: &konnect_ipc::gen::kiapi::board::types::Field| {
+        super::pcb_footprint_update::transform_library_property(field, &position, rotation, false)
+    };
+    let definition = footprint
+        .definition
+        .as_mut()
+        .context("built footprint has no definition")?;
+    for (source, defined, placed) in [
+        (
+            &fields.reference,
+            &mut definition.reference_field,
+            &mut footprint.reference_field,
+        ),
+        (
+            &fields.value,
+            &mut definition.value_field,
+            &mut footprint.value_field,
+        ),
+        (
+            &fields.datasheet,
+            &mut definition.datasheet_field,
+            &mut footprint.datasheet_field,
+        ),
+        (
+            &fields.description,
+            &mut definition.description_field,
+            &mut footprint.description_field,
+        ),
+    ] {
+        if let Some(field) = source {
+            let field = place(field)?;
+            *defined = Some(field.clone());
+            *placed = Some(field);
+        }
+    }
+    for field in &fields.custom {
+        definition.items.push(konnect_ipc::builders::pack_any(
+            &place(field)?,
+            "kiapi.board.types.Field",
+        ));
+    }
+    Ok(())
+}
+
+fn library_fields_not_carried(
+    plan: &SyncPlan,
+    prepared: &BTreeMap<String, PreparedFootprint>,
+) -> Vec<SyncDiagnostic> {
+    let mut references: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for change in &plan.changes {
+        if let PlannedChange::Add {
+            footprint_id,
+            reference,
+            ..
+        } = change
+        {
+            references
+                .entry(footprint_id)
+                .or_default()
+                .push(reference.clone());
+        }
+    }
+    references
+        .into_iter()
+        .filter_map(|(footprint_id, references)| {
+            let reason = prepared.get(footprint_id)?.library_fields.as_ref().err()?;
+            Some(footprint_conflict(
+                "library_fields_not_carried",
+                format!(
+                    "{footprint_id}'s library properties could not be read, so {} will be \
+                     placed with default fields, not the library's: {reason}",
+                    listed(&references)
+                ),
+                footprint_id,
+                references,
+            ))
+        })
+        .collect()
 }
 
 /// Prepare every footprint the plan adds. One that cannot be prepared does
@@ -3251,14 +3448,7 @@ mod tests {
 
         let sent = footprint_with_artwork("U4");
         let expected = footprint_shapes(std::iter::once(&sent));
-        assert_eq!(
-            expected["U4"],
-            FootprintShape {
-                pads: 1,
-                drawings: 6,
-                ..Default::default()
-            }
-        );
+        assert_eq!((expected["U4"].pads, expected["U4"].drawings), (1, 6));
 
         // Exactly #244: decode every child as a Pad and pack it back as one.
         let mut corrupted =
@@ -3277,14 +3467,7 @@ mod tests {
         // decode as a `Pad`, while `BoardGraphicShape`'s do not — which is why
         // #239 reported footprints losing their *graphics* while their
         // reference and value text stayed put.
-        assert_eq!(
-            actual["U4"],
-            FootprintShape {
-                pads: 6,
-                drawings: 1,
-                ..Default::default()
-            }
-        );
+        assert_eq!((actual["U4"].pads, actual["U4"].drawings), (6, 1));
         assert_ne!(actual["U4"], expected["U4"]);
     }
 
@@ -4773,12 +4956,16 @@ mod tests {
     enum Readback {
         /// Exactly what was sent, as a KiCad that kept everything does.
         AsSent,
+        /// Native EDA_TEXT serialization materializes default-valued messages.
+        CanonicalTextDefaults,
         /// What was sent without the instance attributes and 3D models: the
         /// board the sync built before #789.
         WithoutLibraryData,
         /// What was sent with its mounting style and models, but DNP cleared:
         /// one flag lost while everything the old check looked at survives.
         WithoutDnp,
+        /// Independent one-field losses, not an echo of the expected shape.
+        FieldLoss(&'static str),
     }
 
     impl ServedSync {
@@ -5086,6 +5273,36 @@ mod tests {
     fn read_back(item: &prost_types::Any, readback: Readback) -> prost_types::Any {
         match readback {
             Readback::AsSent => item.clone(),
+            Readback::CanonicalTextDefaults => {
+                let mut footprint =
+                    konnect_ipc::gen::kiapi::board::types::FootprintInstance::decode(
+                        item.value.as_slice(),
+                    )
+                    .unwrap();
+                for field in [
+                    &mut footprint.reference_field,
+                    &mut footprint.value_field,
+                    &mut footprint.datasheet_field,
+                    &mut footprint.description_field,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let attributes = field
+                        .text
+                        .as_mut()
+                        .unwrap()
+                        .text
+                        .as_mut()
+                        .unwrap()
+                        .attributes
+                        .as_mut()
+                        .unwrap();
+                    attributes.stroke_width.get_or_insert_with(Default::default);
+                    attributes.angle.get_or_insert_with(Default::default);
+                }
+                konnect_ipc::builders::pack_any(&footprint, "kiapi.board.types.FootprintInstance")
+            }
             Readback::WithoutLibraryData => {
                 let mut footprint =
                     konnect_ipc::gen::kiapi::board::types::FootprintInstance::decode(
@@ -5111,7 +5328,326 @@ mod tests {
                 }
                 konnect_ipc::builders::pack_any(&footprint, "kiapi.board.types.FootprintInstance")
             }
+            Readback::FieldLoss(loss) => {
+                let mut footprint =
+                    konnect_ipc::gen::kiapi::board::types::FootprintInstance::decode(
+                        item.value.as_slice(),
+                    )
+                    .unwrap();
+                if loss == "custom" {
+                    footprint
+                        .definition
+                        .as_mut()
+                        .unwrap()
+                        .items
+                        .retain(|child| {
+                            !konnect_ipc::builders::any_is(child, "kiapi.board.types.Field")
+                        });
+                } else {
+                    let field = footprint.value_field.as_mut().unwrap();
+                    let text = field.text.as_mut().unwrap();
+                    match loss {
+                        "layer" => {
+                            text.layer =
+                                konnect_ipc::gen::kiapi::board::types::BoardLayer::BlFSilkS as i32
+                        }
+                        "visibility" => field.visible = false,
+                        "upright" => {
+                            text.text
+                                .as_mut()
+                                .unwrap()
+                                .attributes
+                                .as_mut()
+                                .unwrap()
+                                .keep_upright = false
+                        }
+                        "angle" => {
+                            text.text
+                                .as_mut()
+                                .unwrap()
+                                .attributes
+                                .as_mut()
+                                .unwrap()
+                                .angle
+                                .as_mut()
+                                .unwrap()
+                                .value_degrees = 180.0
+                        }
+                        "thickness" => {
+                            text.text
+                                .as_mut()
+                                .unwrap()
+                                .attributes
+                                .as_mut()
+                                .unwrap()
+                                .stroke_width
+                                .as_mut()
+                                .unwrap()
+                                .value_nm = 10_000
+                        }
+                        "thickness_missing" => {
+                            text.text
+                                .as_mut()
+                                .unwrap()
+                                .attributes
+                                .as_mut()
+                                .unwrap()
+                                .stroke_width = None
+                        }
+                        _ => panic!("unknown field loss {loss}"),
+                    }
+                }
+                konnect_ipc::builders::pack_any(&footprint, "kiapi.board.types.FootprintInstance")
+            }
         }
+    }
+
+    #[tokio::test]
+    async fn a6_served_addition_has_library_fields_and_raw_180() {
+        use konnect_ipc::gen::kiapi::board::types::{BoardLayer, Field};
+        let served = ServedSync::new().await;
+        let library = served
+            .board
+            .parent()
+            .unwrap()
+            .join("Capacitor_SMD.pretty/C_0603_1608Metric.kicad_mod");
+        let source = std::fs::read_to_string(&library).unwrap();
+        // Controlled parser variant of a native fixture, not a native oracle.
+        let source = source.replacen("(at 0 -1.43 0)", "(at 0 -1.43 180) (unlocked yes)", 1);
+        std::fs::write(library, source).unwrap();
+        let applied = served
+            .apply(&exported_netlist(&[("C1", STOCK_0603, &["1", "2"])]))
+            .await;
+        assert_eq!(applied["status"], "applied", "{applied:#}");
+        assert_eq!(applied["diagnostics"], serde_json::json!([]));
+        let sent = &served.sent_footprints()[0];
+        let reference = FieldShape::of(sent.reference_field.as_ref().unwrap());
+        assert_eq!(reference.text, "C1");
+        assert_eq!(reference.angle, 180.0);
+        assert!(!reference.upright);
+        assert_eq!(reference.thickness_nm, 150_000);
+        let value = FieldShape::of(sent.value_field.as_ref().unwrap());
+        assert_eq!(value.layer, BoardLayer::BlFFab as i32);
+        assert!(value.visible);
+        assert!(value.upright);
+        assert_eq!(value.text, "part");
+        let custom = sent
+            .definition
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| konnect_ipc::builders::any_is(item, "kiapi.board.types.Field"))
+            .map(|item| Field::decode(item.value.as_slice()).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(custom.len(), 1);
+        assert_eq!(custom[0].name, "KiLib_Generator");
+        assert!(!custom[0].visible);
+    }
+
+    #[tokio::test]
+    async fn a6_served_readback_detects_independent_field_losses() {
+        for loss in [
+            "custom",
+            "layer",
+            "visibility",
+            "upright",
+            "angle",
+            "thickness",
+            "thickness_missing",
+        ] {
+            let served = ServedSync::reading_back(Readback::FieldLoss(loss)).await;
+            let applied = served
+                .apply(&exported_netlist(&[("C1", STOCK_0603, &["1", "2"])]))
+                .await;
+            assert_eq!(applied["status"], "applied", "{loss}: {applied:#}");
+            let diagnostics = applied["diagnostics"].as_array().unwrap();
+            assert_eq!(diagnostics.len(), 1, "{loss}: {applied:#}");
+            assert_eq!(diagnostics[0]["code"], "board_readback_differs");
+            let message = diagnostics[0]["message"].as_str().unwrap();
+            assert!(
+                message.contains(if loss == "custom" {
+                    "KiLib_Generator"
+                } else {
+                    "Value"
+                }),
+                "{message}"
+            );
+            assert!(message.contains("board now has"), "{message}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a6_canonicalized_fallback_readback_is_not_a_field_loss() {
+        use konnect_ipc::gen::kiapi::board::types::FootprintInstance;
+
+        let served = ServedSync::reading_back(Readback::CanonicalTextDefaults).await;
+        let library = served
+            .board
+            .parent()
+            .unwrap()
+            .join("Capacitor_SMD.pretty/C_0603_1608Metric.kicad_mod");
+        let source = std::fs::read_to_string(&library).unwrap();
+        let unsupported = source.replacen("(hide yes)", "(hide yes) (future_clause yes)", 1);
+        std::fs::write(library, unsupported).unwrap();
+        let applied = served
+            .apply(&exported_netlist(&[("C1", STOCK_0603, &["1", "2"])]))
+            .await;
+        assert_eq!(applied["status"], "applied", "{applied:#}");
+        let diagnostics = applied["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1, "{applied:#}");
+        assert_eq!(diagnostics[0]["code"], "library_fields_not_carried");
+        let sent = served.created.lock().unwrap()[0].clone();
+        let kept = read_back(&sent, Readback::CanonicalTextDefaults);
+        assert_ne!(
+            sent, kept,
+            "the canonicalizing mock must not echo the message"
+        );
+        let sent = FootprintInstance::decode(sent.value.as_slice()).unwrap();
+        let kept = FootprintInstance::decode(kept.value.as_slice()).unwrap();
+        let mut field = sent.value_field.unwrap();
+        let attrs = field
+            .text
+            .as_mut()
+            .unwrap()
+            .text
+            .as_mut()
+            .unwrap()
+            .attributes
+            .as_mut()
+            .unwrap();
+        assert!(
+            attrs.stroke_width.is_none(),
+            "fallback must exercise absent thickness"
+        );
+        attrs.angle = None;
+        let kept = kept.value_field.unwrap();
+        let kept_attributes = kept
+            .text
+            .as_ref()
+            .unwrap()
+            .text
+            .as_ref()
+            .unwrap()
+            .attributes
+            .as_ref()
+            .unwrap();
+        assert_eq!(kept_attributes.stroke_width.as_ref().unwrap().value_nm, 0);
+        let absent = FieldShape::of(&field);
+        let canonical = FieldShape::of(&kept);
+        assert_eq!(absent.angle, 0.0);
+        assert_eq!(absent.thickness_nm, 0);
+        assert!(absent.matches(&canonical));
+    }
+
+    #[tokio::test]
+    async fn a6_unreadable_even_hidden_properties_apply_with_diagnostic() {
+        for clause in [
+            "(future_clause yes)",
+            "(unlocked yes) (unlocked no)",
+            "(locked yes)",
+            "duplicate_name",
+            "partial_mandatory",
+        ] {
+            let served = ServedSync::new().await;
+            let library = served
+                .board
+                .parent()
+                .unwrap()
+                .join("Capacitor_SMD.pretty/C_0603_1608Metric.kicad_mod");
+            let source = std::fs::read_to_string(&library).unwrap();
+            let source = match clause {
+                "duplicate_name" => source.replacen(
+                    "(property \"KiLib_Generator\"",
+                    "(property \"Reference\"",
+                    1,
+                ),
+                "partial_mandatory" => source.replacen(
+                    "(property \"KiLib_Generator\"",
+                    "(property \"Datasheet\" \"important.pdf\") (property \"KiLib_Generator\"",
+                    1,
+                ),
+                _ => source.replacen("(hide yes)", &format!("(hide yes) {clause}"), 1),
+            };
+            std::fs::write(library, source).unwrap();
+            let netlist = exported_netlist(&[("C1", STOCK_0603, &["1", "2"])]);
+            let plan = served.dry_run(&netlist).await;
+            assert_eq!(plan["status"], "ready");
+            assert!(
+                served.sent_footprints().is_empty(),
+                "dry run must not create"
+            );
+            assert_eq!(plan["diagnostics"][0]["code"], "library_fields_not_carried");
+            assert_eq!(
+                plan["diagnostics"][0]["references"],
+                serde_json::json!(["C1"])
+            );
+            assert_eq!(plan["diagnostics"][0]["footprint_id"], STOCK_0603);
+            let applied = served.apply(&netlist).await;
+            assert_eq!(applied["status"], "applied", "{applied:#}");
+            assert_eq!(
+                applied["coverage"]["footprints_added"]["applied"], 1,
+                "{applied:#}"
+            );
+            assert_eq!(
+                applied["diagnostics"][0]["code"],
+                "library_fields_not_carried"
+            );
+            assert_eq!(served.sent_footprints().len(), 1);
+        }
+    }
+
+    #[test]
+    fn a6_visible_property_is_not_drawn_twice_and_fallback_still_draws() {
+        let source = include_str!("../../tests/fixtures/c_0603_1608metric_kicad10.kicad_mod");
+        let visible = source.replacen("(hide yes)", "(hide no)", 1);
+        let count = |part: &PreparedFootprint| {
+            part.graphics
+                .iter()
+                .filter(|graphic| {
+                    matches!(graphic, konnect_ipc::IpcGraphicDefinition::Text { text, .. }
+                        if text == "SMD_2terminal_chip_molded")
+                })
+                .count()
+        };
+        let part = prepare_footprint_source(&visible).unwrap();
+        assert!(part.library_fields.as_ref().unwrap().custom[0].visible);
+        assert_eq!(count(&part), 0);
+        let fallback = prepare_footprint_source(&visible.replacen(
+            "(hide no)",
+            "(hide no) (future_clause yes)",
+            1,
+        ))
+        .unwrap();
+        assert!(fallback.library_fields.is_err());
+        assert_eq!(count(&fallback), 1);
+        // Mandatory value-only fields must not silently disappear in additions.
+        let partial = source.replacen(
+            "(property \"KiLib_Generator\"",
+            "(property \"Datasheet\" \"important.pdf\") (property \"KiLib_Generator\"",
+            1,
+        );
+        assert!(prepare_footprint_source(&partial)
+            .unwrap()
+            .library_fields
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn a6_apply_retains_dry_run_staging() {
+        let served = ServedSync::build(None, kicad_10_refusals(), Readback::AsSent).await;
+        let netlist = exported_netlist(&[("C1", STOCK_0603, &["1", "2"])]);
+        let planned = served.dry_run(&netlist).await;
+        let applied = served.apply(&netlist).await;
+        assert_eq!(applied["status"], "applied");
+        assert_eq!(planned["staging"], applied["staging"]);
+        assert_eq!(
+            applied["staging"],
+            serde_json::json!({
+                "basis": "no_measured_geometry",
+                "unavailable_item_classes": [refused_class("tables"), refused_class("generators")],
+            })
+        );
     }
 
     /// `netlist` with `reference` marked DNP the way `kicad-cli` exports it.
