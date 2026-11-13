@@ -69,7 +69,11 @@ pub fn ranges(source: &str) -> Vec<(usize, usize)> {
         .filter(|&(start, end)| parse_sexp(&source[start..end]).unwrap().head() == Some("symbol"))
         .collect();
     assert_eq!(ranges.len(), root.find_all("symbol").len());
-    assert_eq!(ranges.len(), UUIDS.len(), "exactly 25 direct placed symbols");
+    assert_eq!(
+        ranges.len(),
+        UUIDS.len(),
+        "exactly 25 direct placed symbols"
+    );
     ranges
 }
 
@@ -113,7 +117,11 @@ pub fn assert_native(source: &str) {
 }
 
 pub fn assert_exact(before: &str, after: &str) {
-    assert_eq!(blocks(after), blocks(before), "exact untouched symbol block bytes");
+    assert_eq!(
+        blocks(after),
+        blocks(before),
+        "exact untouched symbol block bytes"
+    );
 }
 
 pub fn assert_others_exact(before: &str, after: &str) {
@@ -156,7 +164,11 @@ pub fn assert_attributes(before: &str, after: &str) {
                 between.iter().all(|n| n.head() == Some(tag)),
                 "{uuid}: only {tag} belongs between {left} and {right}"
             );
-            assert_eq!(between.len(), node.find_all(tag).len(), "{uuid}: {tag} slot");
+            assert_eq!(
+                between.len(),
+                node.find_all(tag).len(),
+                "{uuid}: {tag} slot"
+            );
         }
     }
 }
@@ -200,7 +212,10 @@ pub const RAW_CASES: &[(&str, &str)] = &[
     ("", ""),
     ("\t\t(body_style 2)\n", "\t\t(in_pos_files no)\n"),
     ("\t\t(body_style \"2\")\n", "\t\t(in_pos_files \"no\")\n"),
-    ("\t\t(body_style future_value)\n", "\t\t(in_pos_files future_value)\n"),
+    (
+        "\t\t(body_style future_value)\n",
+        "\t\t(in_pos_files future_value)\n",
+    ),
     ("\t\t(body_style)\n", "\t\t(in_pos_files)\n"),
     (
         "\t\t(body_style \"not an integer\" (future 9))\n",
@@ -246,7 +261,11 @@ pub fn assert_unknown(before: &str, after: &str) {
     let written = blocks(after);
     let expected = unknown(originals[TARGET]);
     assert_eq!(expected.len(), 3, "synthetic unknown-node precondition");
-    assert_eq!(unknown(written[TARGET]), expected, "unknown contents and mutual order");
+    assert_eq!(
+        unknown(written[TARGET]),
+        expected,
+        "unknown contents and mutual order"
+    );
 }
 
 pub fn assert_canonical_flag(source: &str, enabled: bool) {

@@ -123,14 +123,8 @@ async fn native(
     seconds: u32,
     arguments: &[&str],
 ) -> (std::process::Output, Value) {
-    assert!(
-        cfg!(target_os = "linux"),
-        "native gate requires Linux"
-    );
-    assert!(
-        Path::new(cli).is_absolute(),
-        "explicit absolute native CLI"
-    );
+    assert!(cfg!(target_os = "linux"), "native gate requires Linux");
+    assert!(Path::new(cli).is_absolute(), "explicit absolute native CLI");
     let wrapper = artifacts.join(format!("symbol-native-{phase}.py"));
     std::fs::write(&wrapper, include_str!("support/pcb_export_supervisor.py")).unwrap();
     std::fs::write(
@@ -163,8 +157,16 @@ async fn native(
         .output()
         .await
         .unwrap();
-    std::fs::write(artifacts.join(format!("{phase}.stdout.log")), &output.stdout).unwrap();
-    std::fs::write(artifacts.join(format!("{phase}.stderr.log")), &output.stderr).unwrap();
+    std::fs::write(
+        artifacts.join(format!("{phase}.stdout.log")),
+        &output.stdout,
+    )
+    .unwrap();
+    std::fs::write(
+        artifacts.join(format!("{phase}.stderr.log")),
+        &output.stderr,
+    )
+    .unwrap();
     let audits: Vec<_> = std::fs::read_dir(wrapper.with_extension("audit"))
         .unwrap()
         .map(|entry| entry.unwrap().path().join("finished.json"))

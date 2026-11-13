@@ -28,11 +28,11 @@ HASHES = {
     SYMBOL: "226286fc2887f9f2a96fd629d74f34bc584c69372fd4ee42d0460d6d23ef8807",
     BEFORE: BASE_SYMBOL_SHA256,
     Path("crates/konnect-schematic-editor/tests/symbol_serialization.rs"):
-        "f2d6ae0e5fc76d0e3b6b363ce5e6842923ce06f3d33f5a32b4c0128e3056f8f7",
+        "fb6c781788dc041fa970da07c826c9a965ca5e3352a24b0f08a392332c714d1f",
     Path("crates/konnect-schematic-editor/tests/support/symbol_serialization.rs"):
-        "9603a06666ec09bb8d2e127d89e5cfa177cbbe5927a1a0b34a3b749bc1824543",
+        "0e602cbc6cd1871b6a23a6f1c7d3179555f25641e1dde996c6033142c0633d4c",
     Path("crates/konnect-core/tests/symbol_serialization.rs"):
-        "8e94f82cd98301556121df1a0412adcc2cd2254252ab2cd6ade2b4861fad396b",
+        "161ad76273fdcdddc36cc0102176eeb5b1f6c3b657b330232f0dea4b036ea106",
     Path("crates/konnect-schematic-editor/tests/fixtures/text_preservation_kicad10.kicad_sch"):
         "1bbd268c32a780f2314fb0a280405be92800086ff2ac1a5cf50b15f5ca266398",
     Path("crates/konnect-schematic-editor/tests/fixtures/text_preservation_kicad10.provenance.json"):

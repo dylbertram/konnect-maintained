@@ -35,7 +35,10 @@ fn flag_syntax_survives_unrelated_writes() {
         let source = fixture::with_flag(*clause);
         let all = fixture::blocks(&source);
         let symbol = Symbol::from_sexp(&parse(all[fixture::TARGET]).unwrap()).unwrap();
-        assert_eq!(symbol.fields_autoplaced, *effective, "{name}: effective bool");
+        assert_eq!(
+            symbol.fields_autoplaced, *effective,
+            "{name}: effective bool"
+        );
         let written = round_trip(&source);
         fixture::assert_others_exact(&source, &written);
         fixture::assert_attributes(&source, &written);
@@ -88,7 +91,10 @@ fn intentional_bool_edits_override_raw_syntax_with_yes_or_no() {
             .iter()
             .find(|s| s.uuid == fixture::TARGET)
             .unwrap();
-        assert_eq!(target.fields_autoplaced, !*effective, "{name}: reloaded bool");
+        assert_eq!(
+            target.fields_autoplaced, !*effective,
+            "{name}: reloaded bool"
+        );
         fixture::assert_canonical_flag(&reloaded.to_source(), !*effective);
     }
 }
@@ -99,7 +105,7 @@ fn constructors_and_existing_exhaustive_literals_remain_source_compatible() {
     assert!(!symbol.fields_autoplaced);
     let node = symbol.to_sexp();
     for tag in ["body_style", "in_pos_files", "fields_autoplaced"] {
-        assert!(node.find(tag).is_none(), "constructor must not invent {tag}");
+        assert_eq!(node.find(tag), None, "constructor must not invent {tag}");
     }
     symbol.fields_autoplaced = true;
     assert_eq!(symbol.to_sexp().get_value("fields_autoplaced"), Some("yes"));

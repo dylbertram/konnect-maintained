@@ -202,6 +202,37 @@ No formatter/toolchain, build, test, control, native execution or Boat command
 has been run by this implementation child. Source and Git whitespace review
 are not runtime evidence. qpq3/4nj5 remain open pending coordinator verification.
 
+### Independent review and format-only correction
+
+Production policy and the original 15 source pins were independently reviewed
+on `348417d`. One runner blocker was found: the constructor's custom-message
+assert! did not produce the standard assertion prefix required by the runner.
+It now uses assert_eq!, retaining the strict runner failure classifier rather
+than accepting arbitrary panics.
+
+The coordinator's format-only preflight `cmd_1kxjym78lmhw` exited 1. Its snapshot
+included the uncommitted constructor correction. The complete formatting diff is
+retained in the parent at
+`.remote-build-jobs/boat-symbol-verification/format-full.log`.
+Only those formatting changes were applied by patch, with no formatter or
+toolchain execution in this child. The shared helper appeared twice in the
+reported diff through its two integration-test include paths; it was changed
+once. Production symbol.rs, the original complete baseline, the reused native
+fixture and its provenance remain unchanged.
+
+Post-correction review SHA-256 values, also refreshed in the control runner:
+
+- `crates/konnect-schematic-editor/tests/symbol_serialization.rs`:
+  `fb6c781788dc041fa970da07c826c9a965ca5e3352a24b0f08a392332c714d1f`
+- `crates/konnect-schematic-editor/tests/support/symbol_serialization.rs`:
+  `0e602cbc6cd1871b6a23a6f1c7d3179555f25641e1dde996c6033142c0633d4c`
+- `crates/konnect-core/tests/symbol_serialization.rs`:
+  `161ad76273fdcdddc36cc0102176eeb5b1f6c3b657b330232f0dea4b036ea106`
+
+Format rejection is not a failed regression test or proof of compilation.
+The coordinator still owns format rerun, positive/control/native verification
+and eventual parent integration. This child has not merged the newer parent.
+
 After explicit capacity admission and dependency/cache preparation:
 
 ```sh
