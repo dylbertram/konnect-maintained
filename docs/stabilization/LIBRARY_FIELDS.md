@@ -1,95 +1,38 @@
 # A6a library-field foundation
 
-This is an implementation and proposed verification gate, not test results.
-Base: `cleanup/main` at `410675b`. Existing Kata `annz` owns this bounded work;
-`z705` remains the broader, partially addressed report. The coordinator owns
-remote admission, native capture, parent integration and subsequent cleanup.
-No build, test, typecheck or job was run by the child. Local checks were scoped
-Rust formatting and Git whitespace/source review only. After the server restart,
-the final formatter invocation unexpectedly triggered rustup's automatic
-repair/install of Rust 1.96.0. This was not an admitted build/test setup; no
-further local toolchain commands were run. The coordinator should account for
-that host-side effect rather than treating this as installation-free work.
+Verified and merged into `cleanup/main` at `d9b33fd`. Kata `annz` is closed;
+`z705` remains partially addressed. This packet covers library-field fidelity
+for sync additions and supported refreshes, not broader PCB preservation.
 
-## Corrections to the unapproved first commit
+## Verification
 
-Independent review rejected `95e9d23` for two issues. Runtime gates must use
-the corrected child, not that first commit:
+Candidate `04f5d81` and merged parent `d9b33fd` have identical Git tree
+`d62775f731a20033722a368a30c7c213109494dc`. Their sanitized source archive is
+`0e439fdc4856363d8091320e6f6fcba4f584bf8c1bb8d692cb5abfd1ef52994f`.
 
-- Readback compared message presence for angle/thickness. In KiCad 10.0.5,
-  [`EDA_TEXT::Deserialize`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/common/eda_text.cpp#L208-L249)
-  reads `angle().value_degrees()` and `stroke_width().value_nm()`, including their
-  protobuf zero defaults. [`Serialize`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/common/eda_text.cpp#L174-L205)
-  always materializes those messages. `FieldShape` now compares their values,
-  with absent equal to zero. It does not ignore a nonzero thickness difference.
-  A served fallback case rewrites outgoing absent widths to explicit zero
-  messages, asserts the serialized response differs from the sent message and
-  requires no spurious readback diagnostic. A separate omitted-angle shape
-  check and nonzero-to-missing/nonzero-to-different-width losses remain covered.
-- The native helper used `SetOrientationDegrees`, which is not a whole-footprint
-  editor rotation. In
-  [`FOOTPRINT::Rotate`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/footprint.cpp#L2900-L2920),
-  KiCad sets orientation and then calls `KeepUpright` on its fields.
-  [`SetOrientation`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/footprint.cpp#L3101-L3127)
-  rotates children without that final step.
-  [`PCB_TEXT::KeepUpright`](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/pcb_text.cpp#L374-L392)
-  returns immediately for non-upright text. The helper now invokes the real
-  `FOOTPRINT::Rotate` operation, with no postprocessing of expected field angles.
+- All 12 isolated controls passed on `d612c964`, followed by nine restored
+  positives, in `cmd_tymm5zspprdn`. The three production Rust files and control
+  runner are unchanged between that revision and the accepted parent.
+- Fresh Boat worker `bx_6frysepk` passed formatting, full workspace tests/build,
+  Clippy with warnings denied, doctests, 18 plugin tests, nine script tests and
+  native supervisor/export/private/route/text acceptance in
+  `cmd_bfx0jxxpnlh7` and `cmd_bgglg6xp2w6k`.
+- Native KiCad 10.0.8 field comparisons and lifecycle passed in
+  `cmd_t20f2y8csku2`. Post-merge `cmd_qxtdapc6scme` reran workspace checks and
+  native field acceptance. The lifecycle audit has no final owned descendants,
+  mounts or cleanup errors; an independent post-exit check confirms root absence.
+- Full logs and captures are retained under
+  `.remote-build-jobs/boat-field-lifecycle-verification/`. The parent native
+  archive SHA-256 is
+  `08268d6c817a55ef73ab3b16945b1ec3715fa25406933380498b2f7e6226ea9d`.
+- The clean, fully merged implementation branch/worktree was removed.
 
-These are source corrections and proposed controls, not claims of execution.
-No local toolchain commands, builds, tests or jobs were run for this correction.
-
-Subsequent review of parent-refreshed `c4a1d90` found that the native
-`FallbackLocked` precondition did not survive saving. KiCad's
-[field writer](https://github.com/KiCad/kicad-source-mirror/blob/10.0.5/pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp#L1243-L1255)
-emits properties separately from ordinary text; the latter's locked-clause
-serialization cannot establish a PCB_FIELD lock in the saved library.
-The helper now uses `FallbackDuplicate`, renaming the existing custom
-AssemblyVendor field to KiLib_Generator through native `PCB_FIELD::SetName`.
-The field writer iterates every field and writes its canonical name without
-deduplicating. Immediately after native `FootprintSave`, a read-only assertion
-requires exactly two saved `(property "KiLib_Generator" …)` entries and records
-`fallback-native-precondition.json`. If the installed KiCad does not persist
-that case, the gate fails before sync rather than editing the CAD artifact.
-
-Coordinator provisioning initially requested nonexistent `python3-kicad`;
-the existing setup subsequently confirmed pcbnew 10.0.8. The exact `c4a1d90`
-remote run then stopped on two Rust formatting differences before tests.
-Both reported differences are corrected by patch here. No local formatter,
-test or job was run for this follow-up; all runtime acceptance remains pending.
-
-Coordinator verification of `d612c964` subsequently passed formatting, focused
-`a6_`, `library_footprint`, `pcb_sync` and `pcb_footprint_update` tests, workspace
-Clippy and the debug build. Native command `cmd_yexsr7rgt9op` exited 1 before
-production because `/usr/share/kicad/template/design-block-lib-table` was absent.
-Installing `kicad-templates` 10.0.8 in `cmd_xjbjz4lf7k1m` did not supply it.
-That is a configuration-layout assumption in the helper, not field acceptance
-evidence or proof that KiCad's design-block capability is unavailable. The
-minimal helper correction below has not been executed by the child.
-
-Coordinator reports all 12 isolated `d612c964` mutation controls passed their
-expected failure checks, with all nine positives passing again after exact
-source restoration. Production Rust remains unchanged in the helper follow-ups.
-Native `c9f3409` command `cmd_nzt49exyhq5q` got past configuration and failed
-before production because convenience `pcbnew.FootprintSave` could not infer a
-plugin from the newly empty `A6.pretty`. The helper now explicitly constructs
-`PCB_IO_KICAD_SEXPR`, invokes `CreateLibrary` on the not-yet-existing path and
-uses that plugin instance's `FootprintSave`. No seed CAD, plugin-name heuristic
-or unverified plugin-manager enum is used.
-
-Native v3 `cmd_brzxgphxmsfb` reached every sync/refresh comparison and populated
-the actual/expected fields, then failed with `EBUSY` removing disposable
-`home/.gvfs`. This is an overall failed run due to cleanup, not a field mismatch
-and not accepted native evidence. Preserve its failed root and retrieved
-`native-v3-full.log` / `native-v3/target/a6-native-v3` artifacts; do not reuse
-or manually delete that root.
-
-Coordinator read-only reconciliation `cmd_dnij1fbajqjs` found no remaining
-ka6/helper/editor/Konnect processes. The observed gvfsd/gvfsd-fuse processes and
-`/run/user/1000/gvfs` mount predated the tests and belonged to shared desktop
-services. No orphan or ownership claim is inferred from those observations.
-This child does not kill, unmount or otherwise repair those shared services.
-The new helper must run with a fresh root and prove its own cleanup.
+Earlier setup, fixture and GVFS-cleanup failures remain failed, with their
+retrieved evidence under `.remote-build-jobs/boat-field-verification/` and
+details on `annz`. Do not reuse or manually delete the failed remote root,
+or signal shared desktop services. During development, a local formatter shim
+unexpectedly triggered Rust 1.96.0 repair/install; that unadmitted side effect
+was recorded and was not used as verification evidence.
 
 ## Source review and replacement boundary
 
@@ -97,7 +40,7 @@ The archived #820 record has three discussion comments, zero formal reviews and
 zero inline review comments. Its final comment identifies the unresolved raw
 angle fold at exact candidate head `6312362`.
 
-Preserved `origin/fix/789-library-fields` is
+Retired `origin/fix/789-library-fields` was
 `63123625e1e4512cdca3cce1ac5ab4997db3ee4d`. Its only commits beyond `9488e5f`
 are `e0a862b2db6b66fea63d2c47852a475050e8c212` and `6312362`. The three
 affected Rust files at child base are byte-identical to `9488e5f`. No historical
@@ -121,16 +64,15 @@ its earlier value-only handling.
 
 This is an intentional corrected replacement, not byte-equivalence to #820.
 The old archived test bodies and migration text are not all copied verbatim.
-Their contracts are covered by the tests below and remain subject to execution.
+Their contracts are covered by the verified tests below.
 Historical CI, stock-library counts and native observations are not results
 for this child.
 
-Only after this replacement is reviewed, verified on the combined parent and
-merged may the coordinator classify the old candidate as superseded and retire
-its branch, subject to checking that ref has not gained new content. There is no
-remaining intended unique production feature from its two commits after that
-accepted replacement. Keep its acceptance record and provenance even if its ref
-is retired. Neither the old ref nor any unrelated branch is deleted here.
+An independent four-file audit found no remaining unique implementation or test
+intent. After parent verification, the coordinator rechecked the remote SHA and
+deleted only that branch with an exact-SHA lease. A subsequent remote query
+confirmed absence. Its provenance and acceptance evidence remain retained;
+unrelated Dependabot branches are preserved.
 
 ## Contracts and reachable paths
 
@@ -434,16 +376,17 @@ Request artifact `target/a6-native-evidence.tar.gz`. Key contents:
 - the four native `project/A6.pretty/*.kicad_mod` files;
 - supervisor started/finished audit records.
 
-No native capture is committed or claimed yet. Review artifact provenance and
-exact field comparisons before adding a compact reusable native fixture.
+Native captures passed the recorded gates and are retained locally. No extra
+native fixture has been committed. Review artifact provenance and exact field
+comparisons before adding a compact reusable fixture.
 If native upright-angle representation disagrees with the retained fold,
 record that evidence and stop for scope review rather than importing #972's
 larger angle/no-op changes. Preserve the failing artifacts.
 
 ## Remaining acceptance and handoff
 
-Keep `annz` open through review, native capture, negative controls, combined-tree
-verification and parent merge. `z705` additionally requires current saved SMD/THT
+`annz` is closed after review, controls, native capture and parent verification.
+`z705` additionally requires current saved SMD/THT
 attributes/models/description/tags, DRC mismatch accounting and default STEP
 parts evidence. Pad-fabrication losses and coordinate-rounding mismatches are
 separate unresolved acceptance concerns, not silently fixed by field adoption.
@@ -452,7 +395,6 @@ separate unresolved acceptance concerns, not silently fixed by field adoption.
 A7 symbol-field propagation, reset presentation and A8 preservation remain
 separate. Do not close them or pull in their cumulative candidates.
 
-The coordinator must merge every accepted child into `cleanup/main`, verify
-ancestry and a clean child worktree, then remove only that fully merged child
-branch/worktree. No push, deployment, settings changes, live hardware edits or
-old-ref deletion is authorized by this child.
+Future increments follow the same parent integration and clean-child removal
+contract in `CLEANUP_PLAN.md`. This work does not authorize main publication,
+deployment, settings changes or live hardware edits.
