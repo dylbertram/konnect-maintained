@@ -267,6 +267,7 @@ pub fn tools() -> Vec<ToolDef> {
             "get_schematic_pin_locations",
             "Get the exact schematic-space (X,Y) coordinates of every pin on every placed unit of a component, \
              accounting for rotation and mirroring. Uses the canonical pin transform. \
+             The lowest-unit anchor and each units[] entry report mirror_x and mirror_y alongside rotation. \
              Each pin also reports 'orientation_degrees', the direction leading away \
              from the symbol body (0 = east) — a net label at the pin must read that \
              way or its text runs back over the symbol's pin names — and 'length_mm'.",
@@ -284,7 +285,8 @@ pub fn tools() -> Vec<ToolDef> {
             "batch_get_schematic_pin_locations",
             "Get pin locations for multiple components in a single file read. Reports the \
              same per-pin fields as get_schematic_pin_locations, including \
-             'orientation_degrees' and 'length_mm'.",
+             'orientation_degrees' and 'length_mm', plus mirror_x and mirror_y on \
+             each component's lowest-unit anchor and units[] entries.",
             json!({
                 "type": "object",
                 "properties": {
@@ -3624,6 +3626,8 @@ fn pin_locations_for_reference(
             "x": instance.x,
             "y": instance.y,
             "rotation": instance.rotation,
+            "mirror_x": instance.mirror_x,
+            "mirror_y": instance.mirror_y,
             "pins": pins
         }));
     }
@@ -3637,6 +3641,8 @@ fn pin_locations_for_reference(
         "x": anchor.x,
         "y": anchor.y,
         "rotation": anchor.rotation,
+        "mirror_x": anchor.mirror_x,
+        "mirror_y": anchor.mirror_y,
         "unit_count": units.len(),
         "units": units,
         "pins": all_pins
