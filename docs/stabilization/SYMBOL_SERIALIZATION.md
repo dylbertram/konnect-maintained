@@ -8,6 +8,26 @@ reconstructed on `76779157d73a14f46669320e14205b0f67f0a21d`.
 The archived PR694 at `57087b2798624017aea15da5778995561f13cf8a` is evidence,
 not an adopted patch or current verification.
 
+## Verification
+
+Merged at `bbf475c618c48d323a3db7b14416efbfc854f0fc`; `qpq3/4nj5` are closed.
+Candidate `938e8d8` and parent have identical tree
+`f6a0f31273697f9354a5a3ecf9d49999ccebb392` and source archive
+`e8b90d559f96e01c1549e67389324583504678df2292f44526ecfa17fa0b2dd0`.
+
+- `cmd_158ncdem8nfx` passed formatting, six model tests, three served tests,
+  workspace Clippy and native KiCad 10.0.8 acceptance.
+- `cmd_zfvnzjx1ala4` rejected all 15 controls, including the original-code
+  failing-before case, with exact restoration and nine restored positives.
+- Post-merge `cmd_uzwksvy4rxqz` passed full workspace tests/build, Clippy,
+  doctests, 18 plugin tests, nine script tests and native lifecycle, export,
+  private-property, route, text, symbol and library-field acceptance.
+  Field lifecycle audits and independent root-absence checks also passed.
+- Full logs and captures are retained in
+  `.remote-build-jobs/boat-symbol-verification/`. Parent native archive SHA-256:
+  `809e522b2208fe5fba483de1f1a094d87d78fd6cfb520372c77e2f7fe1db1774`.
+  The clean, fully merged child branch/worktree was removed.
+
 ## Approved boundary
 
 The user selected "Preserve syntax unless explicitly edited." This packet adds
@@ -196,61 +216,14 @@ Run on an exclusive disposable source snapshot only, never alongside another
 source writer. Prefer one control per admitted command; all requires a separate
 adequate budget. The runner performs no Git, network or native operations.
 
-## Coordinator commands and status
+## Coordinator reproduction commands
 
-No formatter/toolchain, build, test, control, native execution or Boat command
-has been run by this implementation child. Source and Git whitespace review
-are not runtime evidence. qpq3/4nj5 remain open pending coordinator verification.
-
-### Independent review and format-only correction
-
-Production policy and the original 15 source pins were independently reviewed
-on `348417d`. One runner blocker was found: the constructor's custom-message
-assert! did not produce the standard assertion prefix required by the runner.
-It now uses assert_eq!, retaining the strict runner failure classifier rather
-than accepting arbitrary panics.
-
-The coordinator's format-only preflight `cmd_1kxjym78lmhw` exited 1. Its snapshot
-included the uncommitted constructor correction. The complete formatting diff is
-retained in the parent at
-`.remote-build-jobs/boat-symbol-verification/format-full.log`.
-Only those formatting changes were applied by patch, with no formatter or
-toolchain execution in this child. The shared helper appeared twice in the
-reported diff through its two integration-test include paths; it was changed
-once. Production symbol.rs, the original complete baseline, the reused native
-fixture and its provenance remain unchanged.
-
-Post-correction review SHA-256 values, also refreshed in the control runner:
-
-- `crates/konnect-schematic-editor/tests/symbol_serialization.rs`:
-  `fb6c781788dc041fa970da07c826c9a965ca5e3352a24b0f08a392332c714d1f`
-- `crates/konnect-schematic-editor/tests/support/symbol_serialization.rs`:
-  `0e602cbc6cd1871b6a23a6f1c7d3179555f25641e1dde996c6033142c0633d4c`
-- `crates/konnect-core/tests/symbol_serialization.rs`:
-  `72a222c3db3ee37cbc2854c9e71b2f11a002b8fd074ee104507a3f163b56a858`
-
-Format rejection is not a failed regression test or proof of compilation.
-The coordinator owns verification and parent integration.
-
-### Exact-head stage-one result and platform refusal
-
-The coordinator reported stage one `cmd_2zshusfwghnc` on exact head
-`0729c4ce7048e90f51ee7b3285d2dd23a38b49e4`: formatting passed, all six model
-tests and three served tests passed, then Clippy with -D warnings rejected the
-native helper's assert!(cfg!(target_os = "linux"), ...) as assertions_on_constants.
-The retained result is in the parent at
-`.remote-build-jobs/boat-symbol-verification/stage1-result.json`.
-Native acceptance and controls did not execute because Clippy blocked them.
-Those positive results apply to 0729c4c, not to this subsequent correction.
-
-The native helper now refuses a non-Linux target with if !cfg!(...) followed by
-panic!, matching the existing parent helper pattern without allowing the lint.
-The core test source hash above and its runner pin were refreshed. Production,
-boolean policy and native preservation/connectivity assertions are unchanged.
-No formatter, tests, Clippy, native command or job ran in this child for the
-correction. The coordinator had already integrated 0729c4c; no additional parent
-merge was performed here. Exact-head Clippy rerun, native acceptance and all
-controls remain coordinator-owned and pending.
+Independent source review covered the policy, oracles, strict assertion
+classifier and all 15 pins in `symbol_serialization_controls.py`. Formatting,
+constructor assertion and native-platform guard corrections retained the
+production policy and refreshed affected pins before the accepted gates.
+Earlier format/Clippy failures remain failed, with their exact logs retained
+beside the successful results. No local builds or tests were used as evidence.
 
 After explicit capacity admission and dependency/cache preparation:
 
@@ -273,8 +246,8 @@ cargo test --offline --locked -p konnect-core --test symbol_serialization \
   -- --ignored --exact --nocapture --test-threads=1
 ```
 
-These are proposed commands, not execution evidence or permission to bypass
-capacity checks. Keep a 500 MB memory reserve. If formatting or review changes a
+These reproduction commands require admission, not a capacity-check bypass.
+Keep a 500 MB memory reserve. If formatting or review changes a
 pinned source, review and refresh its explicit hash before controls. Never bypass
 the source-drift check. Coordinator owns verification, merge, Kata reconciliation
 and removal of only the clean fully merged child. Do not close the broader A5

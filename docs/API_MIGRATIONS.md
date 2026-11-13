@@ -33,8 +33,8 @@ positions among modelled children.
 
 Exact untouched-symbol block bytes are the oracle on the unchanged native LF
 fixture, not whole-file or older-format byte identity. No point wrapping, Sheet,
-label, Text or generic-writer changes are included. Verification is coordinator
-owned and remains pending. See `docs/stabilization/SYMBOL_SERIALIZATION.md`.
+label, Text or generic-writer changes are included. Verified scope and
+reproduction gates are in `docs/stabilization/SYMBOL_SERIALIZATION.md`.
 
 ## Unreleased: schematic sync additions carry library fields
 
