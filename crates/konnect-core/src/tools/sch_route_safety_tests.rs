@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-const NATIVE_SOURCE: &str = include_str!("../../tests/fixtures/junction_reconcile.kicad_sch");
+const NATIVE_SOURCE: &str = include_str!("../../tests/fixtures/rotate_junctions_kicad10.kicad_sch");
 
 fn blank(path: &Path) -> cse::Schematic {
     let mut sch = cse::Schematic::from_source(path, NATIVE_SOURCE).unwrap();
@@ -26,7 +26,9 @@ fn blank(path: &Path) -> cse::Schematic {
     sch.raw_other
         .retain(|node| matches!(node.tag(), Some("lib_symbols" | "sheet_instances")));
     sch.generator = Some("konnect-route-tests".into());
-    sch.generator_version = None;
+    // Keep the modern header field explicit without claiming that
+    // Eeschema generated this derivative.
+    sch.generator_version = Some(env!("CARGO_PKG_VERSION").into());
     sch
 }
 
@@ -39,10 +41,21 @@ fn save_generated(sch: &cse::Schematic, path: &Path) {
 fn resistor(sch: &mut cse::Schematic, reference: &str, x: f64, y: f64) {
     let template = cse::Schematic::from_source("unused.kicad_sch", NATIVE_SOURCE).unwrap();
     let native = template.symbols.iter().next().unwrap();
-    let mut part = cse::Symbol::new("Device:R", x, y);
-    // Carry native property formatting, but not another symbol's pin UUIDs.
-    part.properties = native.properties.clone();
-    part.at = native.at.clone();
+    // Clone the complete native placed-symbol record instead of reconstructing
+    // a minimal Symbol::new. Keep body_style, in_pos_files and pin declarations.
+    let mut part = native.clone();
+    part.uuid = konnect_sexp::writer::new_uuid();
+    part.raw_sub_nodes
+        .retain(|node| node.tag() != Some("instances"));
+    for node in &mut part.raw_sub_nodes {
+        if node.tag() == Some("pin") {
+            let uuid = node.find_mut("uuid").expect("native pin declaration UUID");
+            *uuid = cse::sexp::tagged(
+                "uuid",
+                vec![cse::sexp::qstr(konnect_sexp::writer::new_uuid())],
+            );
+        }
+    }
     part.move_to(x, y);
     part.set_rotation(0.0);
     part.set_reference(reference);
@@ -91,7 +104,7 @@ fn design(case: &str) -> (tempfile::TempDir, PathBuf) {
                 .by_reference_mut("R61")
                 .unwrap()
                 .raw_sub_nodes
-                .clear();
+                .retain(|node| node.tag() != Some("instances"));
             child
                 .symbols
                 .by_reference_mut("R61")
@@ -164,6 +177,64 @@ fn same_net(path: &Path, a: (f64, f64), b: (f64, f64)) -> bool {
     let labels = konnect_sexp::schematic::extract_all_net_labels(&tree);
     let mut graph = super::sch_connectivity::net_graph_for(&tree, &extract_wires(&tree), &labels);
     graph.root_at(a.0, a.1) == graph.root_at(b.0, b.1)
+}
+
+#[test]
+fn route_safety_generated_fixture_preserves_native_instance_records_with_fresh_ids() {
+    let (_dir, path) = design("sheet");
+    let generated = cse::Schematic::load(&path).unwrap();
+    let source = cse::Schematic::from_source("unused.kicad_sch", NATIVE_SOURCE).unwrap();
+    assert!(generated.generator_version.is_some());
+    assert_eq!(
+        generated
+            .raw_other
+            .iter()
+            .find(|node| node.tag() == Some("lib_symbols")),
+        source
+            .raw_other
+            .iter()
+            .find(|node| node.tag() == Some("lib_symbols")),
+    );
+    let native = source.symbols.iter().next().unwrap();
+    let mut ids = BTreeSet::new();
+    for symbol in generated.symbols.iter() {
+        assert_ne!(symbol.uuid, native.uuid);
+        assert!(ids.insert(symbol.uuid.clone()));
+        for tag in ["body_style", "in_pos_files"] {
+            assert_eq!(
+                symbol
+                    .raw_sub_nodes
+                    .iter()
+                    .find(|node| node.tag() == Some(tag)),
+                native
+                    .raw_sub_nodes
+                    .iter()
+                    .find(|node| node.tag() == Some(tag)),
+            );
+        }
+        let pins: Vec<_> = symbol
+            .raw_sub_nodes
+            .iter()
+            .filter(|node| node.tag() == Some("pin"))
+            .collect();
+        assert_eq!(pins.len(), 2);
+        for pin in pins {
+            let id = pin.get_value("uuid").unwrap();
+            assert!(ids.insert(id.to_string()));
+            assert!(!native
+                .raw_sub_nodes
+                .iter()
+                .filter(|node| node.tag() == Some("pin"))
+                .any(|node| node.get_value("uuid") == Some(id)));
+        }
+        let instances = symbol.instances();
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].project.as_deref(), Some("route"));
+        assert_eq!(
+            instances[0].path,
+            generated.uuid.as_ref().map(|uuid| format!("/{uuid}"))
+        );
+    }
 }
 
 #[tokio::test]
@@ -446,30 +517,196 @@ async fn route_safety_served_missing_ambiguous_and_unknown_pin_geometry_fail_clo
     }
 }
 
+// Reuse the parent's Linux subreaper/process-group supervisor. Only the small
+// configuration adapter lives here; lifecycle policy stays in that script.
+fn native_supervisor(directory: &Path, program: &str, seconds: u32) -> PathBuf {
+    if !cfg!(target_os = "linux") {
+        panic!("native route acceptance requires Linux");
+    }
+    let wrapper = directory.join(format!("route-supervisor-{}.py", uuid::Uuid::new_v4()));
+    std::fs::write(
+        &wrapper,
+        include_str!("../../tests/support/pcb_export_supervisor.py"),
+    )
+    .unwrap();
+    std::fs::write(
+        wrapper.with_extension("json"),
+        serde_json::to_vec(&json!({
+            "program": program, "seconds": seconds,
+            "audit": wrapper.with_extension("audit"),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    wrapper
+}
+
+// Dropping the Rust future must not kill the Python supervisor. Its independent
+// deadline, group kill and reaping remain active even if this await is cancelled.
+async fn native_output(wrapper: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+    tokio::process::Command::new(wrapper)
+        .args(args)
+        .kill_on_drop(false)
+        .output()
+        .await
+}
+
+fn native_capture_root() -> Option<PathBuf> {
+    let root = std::env::var_os("KONNECT_ROUTE_NATIVE_ARTIFACT_DIR").map(PathBuf::from)?;
+    // Refuse to mix this attempt with an earlier run's evidence.
+    std::fs::create_dir(&root).unwrap_or_else(|error| {
+        panic!(
+            "native artifact directory must be new, {}: {error}",
+            root.display()
+        )
+    });
+    std::fs::write(root.join("source_fixture.kicad_sch"), NATIVE_SOURCE).unwrap();
+    std::fs::write(
+        root.join("source_fixture.README.md"),
+        include_str!("../../tests/fixtures/rotate_junctions_kicad10.README.md"),
+    )
+    .unwrap();
+    Some(root)
+}
+
+fn capture_before_export(
+    root: Option<&Path>,
+    tool: &str,
+    case: &str,
+    phase: &str,
+    path: &Path,
+    request: &Value,
+    wrapper: &Path,
+) -> Option<PathBuf> {
+    let directory = root?.join(tool).join(case).join(phase);
+    std::fs::create_dir_all(directory.parent().unwrap()).unwrap();
+    std::fs::create_dir(&directory).unwrap();
+    // Capture the exact generated parent and child bytes before starting KiCad.
+    for entry in std::fs::read_dir(path.parent().unwrap()).unwrap() {
+        let entry = entry.unwrap();
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "kicad_sch")
+        {
+            std::fs::copy(entry.path(), directory.join(entry.file_name())).unwrap();
+        }
+    }
+    std::fs::write(
+        directory.join("request.json"),
+        serde_json::to_vec_pretty(request).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(directory.join("stdout.log"), b"").unwrap();
+    std::fs::write(directory.join("stderr.log"), b"").unwrap();
+    std::fs::copy(wrapper, directory.join("supervisor.py")).unwrap();
+    std::fs::copy(
+        wrapper.with_extension("json"),
+        directory.join("supervisor.json"),
+    )
+    .unwrap();
+    Some(directory)
+}
+
+fn capture_after_export(
+    directory: Option<&Path>,
+    wrapper: &Path,
+    output: &Path,
+    result: &std::process::Output,
+) {
+    let Some(directory) = directory else { return };
+    std::fs::write(directory.join("stdout.log"), &result.stdout).unwrap();
+    std::fs::write(directory.join("stderr.log"), &result.stderr).unwrap();
+    std::fs::write(
+        directory.join("result.json"),
+        serde_json::to_vec_pretty(&json!({
+            "success": result.status.success(), "exit_code": result.status.code(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    if output.exists() {
+        std::fs::copy(output, directory.join("result.net")).unwrap();
+    }
+    for invocation in std::fs::read_dir(wrapper.with_extension("audit"))
+        .into_iter()
+        .flatten()
+    {
+        let invocation = invocation.unwrap().path();
+        for name in ["started.json", "finished.json"] {
+            let file = invocation.join(name);
+            if file.exists() {
+                std::fs::copy(file, directory.join(name)).unwrap();
+            }
+        }
+    }
+}
+
 // Deliberately ignored: the coordinator must admit a native KiCad environment.
 // Never use the internal graph as the oracle for this acceptance.
-fn native_nets(cli: &str, path: &Path, phase: &str) -> BTreeMap<String, BTreeSet<String>> {
+async fn native_nets(
+    cli: &str,
+    path: &Path,
+    phase: &str,
+    tool: &str,
+    case: &str,
+    capture: Option<&Path>,
+) -> BTreeMap<String, BTreeSet<String>> {
     let output = path.with_extension(format!("{phase}.net"));
-    let result = std::process::Command::new(cli)
-        .args([
-            "sch",
-            "export",
-            "netlist",
-            "--format",
-            "kicadsexpr",
-            "--output",
-        ])
-        .arg(&output)
-        .arg(path)
-        .output()
-        .unwrap();
+    let wrapper = native_supervisor(path.parent().unwrap(), cli, 60);
+    let args = [
+        "sch",
+        "export",
+        "netlist",
+        "--format",
+        "kicadsexpr",
+        "--output",
+        output.to_str().unwrap(),
+        path.to_str().unwrap(),
+    ];
+    let provenance = match (tool, case) {
+        ("source_control", "native_source") => "unchanged repository fixture, native provenance documented in its README; this invocation not yet accepted",
+        ("source_control", "typed_roundtrip") => "typed-model round-trip of repository fixture; this invocation not yet accepted",
+        _ => "typed-model derivative, not native-resaved or native-accepted",
+    };
+    let request = json!({
+        "tool": tool, "case": case, "phase": phase, "input": path, "output": output,
+        "native_program": cli, "native_arguments": args, "supervisor": wrapper,
+        "runtime_limit_seconds": 60,
+        "source_fixture": "crates/konnect-core/tests/fixtures/rotate_junctions_kicad10.kicad_sch",
+        "provenance": provenance,
+    });
+    let captured = capture_before_export(capture, tool, case, phase, path, &request, &wrapper);
+    let diagnostic = format!(
+        "native route export tool={tool} case={case} phase={phase} input={} program={cli:?} argv={args:?} captured={captured:?}",
+        path.display(),
+    );
+    eprintln!("{diagnostic}");
+    let result = native_output(&wrapper, &args)
+        .await
+        .unwrap_or_else(|error| {
+            if let Some(directory) = &captured {
+                std::fs::write(directory.join("spawn-error.log"), error.to_string()).unwrap();
+            }
+            panic!("{diagnostic}: failed to start supervisor: {error}")
+        });
+    capture_after_export(captured.as_deref(), &wrapper, &output, &result);
     assert!(
         result.status.success(),
-        "{}",
+        "{diagnostic}: status={}\nstdout:\n{}\nstderr:\n{}",
+        result.status,
+        String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );
-    let source = std::fs::read_to_string(output).unwrap();
-    let tree = konnect_sexp::parse_sexp(&source).unwrap();
+    let source = std::fs::read_to_string(&output)
+        .unwrap_or_else(|error| panic!("{diagnostic}: cannot read native output: {error}"));
+    let tree = konnect_sexp::parse_sexp(&source)
+        .unwrap_or_else(|error| panic!("{diagnostic}: cannot parse native output: {error}"));
     tree.find("nets")
         .expect("native netlist nets")
         .find_all("net")
@@ -503,6 +740,33 @@ fn native_group(nets: &BTreeMap<String, BTreeSet<String>>, pin: &str) -> BTreeSe
 #[ignore = "coordinator-only native KiCad CLI acceptance, set KONNECT_ROUTE_KICAD_CLI"]
 async fn route_safety_native_before_after_netlist_oracle() {
     let cli = std::env::var("KONNECT_ROUTE_KICAD_CLI").expect("explicit native CLI required");
+    let capture = native_capture_root();
+    // Separate native-source compatibility from typed-model serialization and
+    // later route mutations. Neither control establishes generated validity.
+    let control = tempfile::tempdir().unwrap();
+    let source_path = control.path().join("source-control.kicad_sch");
+    std::fs::write(&source_path, NATIVE_SOURCE).unwrap();
+    let _ = native_nets(
+        &cli,
+        &source_path,
+        "before",
+        "source_control",
+        "native_source",
+        capture.as_deref(),
+    )
+    .await;
+    let roundtrip = cse::Schematic::load(&source_path).unwrap();
+    let roundtrip_path = control.path().join("typed-control.kicad_sch");
+    roundtrip.save(&roundtrip_path).unwrap();
+    let _ = native_nets(
+        &cli,
+        &roundtrip_path,
+        "before",
+        "source_control",
+        "typed_roundtrip",
+        capture.as_deref(),
+    )
+    .await;
     for name in [
         "connect_pins",
         "batch_connect_pins",
@@ -513,7 +777,8 @@ async fn route_safety_native_before_after_netlist_oracle() {
                 continue;
             }
             let (_dir, path) = design(case);
-            let before = native_nets(&cli, &path, "before");
+            let before = native_nets(&cli, &path, "before", name, case, capture.as_deref()).await;
+            let before_bytes = std::fs::read(&path).unwrap();
             assert_eq!(
                 native_group(&before, "R1.2"),
                 BTreeSet::from(["R1.2".into()])
@@ -527,10 +792,23 @@ async fn route_safety_native_before_after_netlist_oracle() {
                     _ => points(),
                 }
             };
+            let request = args.clone();
             let (error, body) = call(name, &path, args).await;
-            let after = native_nets(&cli, &path, "after");
+            if let Some(capture) = &capture {
+                std::fs::write(
+                    capture.join(name).join(case).join("served-call.json"),
+                    serde_json::to_vec_pretty(&json!({
+                        "tool": name, "input": path, "arguments": request,
+                        "is_error": error, "response": body,
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            }
+            let after = native_nets(&cli, &path, "after", name, case, capture.as_deref()).await;
             if ["blocked", "label"].contains(&case) {
                 assert!(error, "{case}: {body}");
+                assert_eq!(std::fs::read(&path).unwrap(), before_bytes);
                 assert_eq!(before, after);
             } else {
                 assert!(!error, "{case}: {body}");
@@ -563,5 +841,97 @@ async fn route_safety_native_before_after_netlist_oracle() {
                 }
             }
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn lifecycle_file(path: &Path) -> Value {
+    // Observation only. The Python deadline owns termination, not this timeout.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !path.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    })
+    .await
+    .unwrap_or_else(|_| panic!("missing lifecycle evidence {}", path.display()))
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[ignore = "coordinator-only Linux/Python 3.9+ lifecycle subprocess coverage"]
+async fn route_safety_native_supervisor_deadline_and_cancellation() {
+    for cancel in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let stub = directory.path().join("route-hang.py");
+        std::fs::write(
+            &stub,
+            r#"#!/usr/bin/env python3
+import json, os, signal, subprocess, sys, time
+from pathlib import Path
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+marker = Path(__file__).with_suffix(".pids.tmp")
+marker.write_text(json.dumps([os.getpid(), child.pid]))
+marker.replace(Path(__file__).with_suffix(".pids.json"))
+time.sleep(5)
+"#,
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let wrapper = native_supervisor(directory.path(), stub.to_str().unwrap(), 2);
+        let mut request = Box::pin(native_output(&wrapper, &[]));
+        // This test runs on Tokio's current-thread runtime. A synchronous
+        // Command::output would starve the marker observer and cannot pass.
+        let pids_path = stub.with_extension("pids.json");
+        let pids = tokio::select! {
+            result = &mut request => panic!("native child finished before cancellation probe: {result:?}"),
+            pids = lifecycle_file(&pids_path) => pids,
+        };
+        let invocation = std::fs::read_dir(wrapper.with_extension("audit"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let started = lifecycle_file(&invocation.join("started.json")).await;
+        let leader = pids[0].as_u64().unwrap();
+        assert!(Path::new(&format!("/proc/{leader}")).exists());
+        if cancel {
+            drop(request);
+        } else {
+            let result = request.await.unwrap();
+            assert_eq!(result.status.code(), Some(124));
+            assert!(
+                String::from_utf8_lossy(&result.stderr).contains("child runtime limit exceeded")
+            );
+        }
+        let finished = lifecycle_file(&invocation.join("finished.json")).await;
+        assert_eq!(finished["supervisor"], started["supervisor"]);
+        assert_eq!(finished["child"], pids[0]);
+        assert_eq!(finished["timed_out"], true);
+        assert_eq!(finished["group_reaped"], true);
+        assert_eq!(finished["status"], -9);
+        assert!(finished["descendants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["pid"] == pids[1] && entry["status"] == -9));
+        for pid in pids.as_array().unwrap() {
+            let pid = pid.as_u64().unwrap();
+            assert!(
+                !Path::new(&format!("/proc/{pid}")).exists(),
+                "native process {pid} survived"
+            );
+        }
+        let supervisor = finished["supervisor"].as_u64().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while Path::new(&format!("/proc/{supervisor}")).exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("supervisor must exit and be reaped after cleanup");
     }
 }
