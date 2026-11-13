@@ -84,4 +84,10 @@ activation, branch protection, release or publication are authorized by this pla
 
 ## Integration record
 
-No implementation child has been integrated yet.
+- Prerequisite PR #11 was already merged into remote `main` at `af8d4c4`.
+  Imported it into `cleanup/main` at `c3d357f` before accepting any cleanup child.
+  Retained the independently integrated editor-shutdown feature and reconciled
+  documentation counts. Combined-tree verification remains pending.
+- Documentation child `6f77284` has independent source-review approval;
+  remote positive and negative-control checks are running before acceptance.
+- No cleanup implementation child has been merged or removed yet.
