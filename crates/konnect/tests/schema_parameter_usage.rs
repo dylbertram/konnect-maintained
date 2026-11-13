@@ -163,9 +163,10 @@ struct BodyFacts {
     function_calls: std::collections::BTreeSet<String>,
     macro_calls: std::collections::BTreeSet<String>,
     string_literals: std::collections::BTreeSet<String>,
+    field_reads: std::collections::BTreeSet<String>,
 }
 
-/// Extract calls and string literals while ignoring comments, character
+/// Extract calls, field reads and string literals while ignoring comments, character
 /// literals, and string contents when looking for calls. The guard needs only
 /// this small subset of Rust syntax; avoiding a textual `contains` sweep over
 /// every function also keeps the whole-catalogue test sub-second.
@@ -230,6 +231,13 @@ fn body_facts(source: &str) -> BodyFacts {
                     facts.function_calls.insert(name.to_string());
                 } else if bytes.get(after) == Some(&b'!') {
                     facts.macro_calls.insert(name.to_string());
+                } else {
+                    let before = source[..start].trim_end();
+                    let assignment =
+                        bytes.get(after) == Some(&b'=') && bytes.get(after + 1) != Some(&b'=');
+                    if before.ends_with('.') && !before.ends_with("..") && !assignment {
+                        facts.field_reads.insert(name.to_string());
+                    }
                 }
             }
             _ => index += 1,
@@ -376,6 +384,8 @@ fn masked_rust_code(source: &str) -> String {
 /// This recognizes the source's actual call graph, so a parameter read by
 /// `read_xy_pair(args)` or by the shared `ipc!` target check counts without a
 /// hand-maintained exemption for either the tool or the parameter.
+/// Field reads also count: typed requests deserialized with serde consume
+/// parameters through `request.field`, not JSON string indexing.
 fn transitive_string_literals(
     root: &str,
     root_path: &Path,
@@ -390,6 +400,7 @@ fn transitive_string_literals(
     while let Some((path, body)) = queue.pop_front() {
         let facts = body_facts(&body);
         literals.extend(facts.string_literals);
+        literals.extend(facts.field_reads);
         for name in facts.function_calls {
             enqueue_called_bodies(&mut queue, &mut seen_functions, functions, &name, &path);
         }
@@ -609,6 +620,44 @@ fn transitive_analysis_follows_helpers_and_macros_without_an_allowlist() {
             "macro_field".to_string(),
         ])
     );
+}
+
+#[test]
+fn transitive_analysis_counts_typed_request_reads_but_not_declarations_or_writes() {
+    let path = PathBuf::from("typed_request.rs");
+    let functions = BTreeMap::from([(
+        "plan".to_string(),
+        vec![IndexedBody {
+            path: path.clone(),
+            source: r#"
+                consume(&request.object_uuids, request.offset_x_mm);
+                // request.commented;
+                let example = "request.in_a_string";
+                request.method_only();
+                request.write_only = 0;
+                let unused_declaration: UnusedRequest;
+            "#
+            .to_string(),
+        }],
+    )]);
+    let reads = transitive_string_literals(
+        "let request: Request = serde_json::from_value(args)?; plan(&request);",
+        &path,
+        &functions,
+        &BTreeMap::new(),
+    );
+    for field in ["object_uuids", "offset_x_mm"] {
+        assert!(reads.contains(field), "{field}");
+    }
+    for field in [
+        "commented",
+        "in_a_string",
+        "method_only",
+        "write_only",
+        "unused_declaration",
+    ] {
+        assert!(!reads.contains(field), "{field}");
+    }
 }
 
 #[test]
