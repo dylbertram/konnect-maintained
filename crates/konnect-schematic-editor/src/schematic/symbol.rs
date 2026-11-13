@@ -10,6 +10,16 @@ fn bool_kw(v: bool) -> &'static str {
     }
 }
 
+/// An absent flag is false, bare/yes is true, and explicit no is false.
+/// Opaque or malformed syntax retains the old presence-based true fallback.
+/// Only a single unquoted `no` has recognized false semantics.
+fn fields_autoplaced_value(node: Option<&SexpNode>) -> bool {
+    match node {
+        None => false,
+        Some(node) => !matches!(node.args(), [SexpNode::Atom(value)] if value == "no"),
+    }
+}
+
 // ---- Symbol -----------------------------------------------------------------
 
 /// One saved hierarchy identity from a placed symbol's `(instances ...)` block.
@@ -42,12 +52,16 @@ pub struct Symbol {
     pub in_bom: bool,
     pub on_board: bool,
     pub dnp: bool,
+    /// Effective autoplacement state. Original syntax lives in `raw_sub_nodes`.
+    /// Unchanged state replays that syntax; a changed bool emits yes or no.
+    /// A bool alone cannot distinguish removing a clause from explicit no.
     pub fields_autoplaced: bool,
     pub uuid: String,
     pub properties: Vec<Property>,
-    /// Every child `to_sexp` does not rebuild from a field above — `pin`,
-    /// `instances`, and anything else KiCAD writes that we don't model —
-    /// preserved verbatim.
+    /// Unmodelled children, including the original autoplacement syntax.
+    /// `body_style`, `in_pos_files` and `fields_autoplaced` are emitted in
+    /// their canonical slots. Other children retain content and mutual order,
+    /// not arbitrary original positions among modelled fields.
     pub raw_sub_nodes: Vec<SexpNode>,
 }
 
@@ -95,7 +109,7 @@ impl Symbol {
         let in_bom = node.get_bool("in_bom").unwrap_or(true);
         let on_board = node.get_bool("on_board").unwrap_or(true);
         let dnp = node.get_bool("dnp").unwrap_or(false);
-        let fields_autoplaced = node.find("fields_autoplaced").is_some();
+        let fields_autoplaced = fields_autoplaced_value(node.find("fields_autoplaced"));
         let uuid = node.get_value("uuid").unwrap_or("").to_owned();
 
         let properties = node
@@ -104,10 +118,9 @@ impl Symbol {
             .filter_map(|n| Property::from_sexp(n))
             .collect();
 
-        // Everything `to_sexp` rebuilds from a typed field. Every *other* child
-        // — `pin`, `instances`, and tokens we don't model such as `convert`
-        // and `default_instance` — is carried through verbatim rather than
-        // dropped (#143).
+        // Autoplacement also keeps its raw node: a bool cannot retain no versus
+        // absence, bare syntax, or future/malformed values. Other unmodelled
+        // children survive as before (#143), including invalid raw attributes.
         const MODELLED: &[&str] = &[
             "lib_name",
             "lib_id",
@@ -118,7 +131,6 @@ impl Symbol {
             "in_bom",
             "on_board",
             "dnp",
-            "fields_autoplaced",
             "uuid",
             "property",
         ];
@@ -161,21 +173,59 @@ impl Symbol {
             c.push(tagged("mirror", vec![atom(m.clone())]));
         }
         c.push(tagged("unit", vec![atom(self.unit.to_string())]));
+        self.emit_raw_attribute(&mut c, "body_style");
         if let Some(x) = self.exclude_from_sim {
             c.push(tagged("exclude_from_sim", vec![atom(bool_kw(x))]));
         }
         c.push(tagged("in_bom", vec![atom(bool_kw(self.in_bom))]));
         c.push(tagged("on_board", vec![atom(bool_kw(self.on_board))]));
+        self.emit_raw_attribute(&mut c, "in_pos_files");
         c.push(tagged("dnp", vec![atom(bool_kw(self.dnp))]));
-        if self.fields_autoplaced {
-            c.push(SexpNode::List(vec![atom("fields_autoplaced")]));
-        }
+        self.emit_fields_autoplaced(&mut c);
         c.push(tagged("uuid", vec![qstr(self.uuid.clone())]));
         for p in &self.properties {
             c.push(p.to_sexp());
         }
-        c.extend(self.raw_sub_nodes.iter().cloned());
+        c.extend(
+            self.raw_sub_nodes
+                .iter()
+                .filter(|node| {
+                    !matches!(
+                        node.tag(),
+                        Some("body_style" | "in_pos_files" | "fields_autoplaced")
+                    )
+                })
+                .cloned(),
+        );
         SexpNode::List(c)
+    }
+
+    fn emit_raw_attribute(&self, children: &mut Vec<SexpNode>, tag: &str) {
+        children.extend(
+            self.raw_sub_nodes
+                .iter()
+                .filter(|node| node.tag() == Some(tag))
+                .cloned(),
+        );
+    }
+
+    fn emit_fields_autoplaced(&self, children: &mut Vec<SexpNode>) {
+        let original = self
+            .raw_sub_nodes
+            .iter()
+            .find(|node| node.tag() == Some("fields_autoplaced"));
+        if self.fields_autoplaced != fields_autoplaced_value(original) {
+            // An explicit bool edit replaces all original clauses, even opaque
+            // or duplicate ones. False writes no, not an implicit removal.
+            children.push(tagged(
+                "fields_autoplaced",
+                vec![atom(bool_kw(self.fields_autoplaced))],
+            ));
+        } else {
+            // Includes duplicates and malformed values, without interpreting
+            // them as a newly supported native grammar.
+            self.emit_raw_attribute(children, "fields_autoplaced");
+        }
     }
 
     // ---- property helpers ---------------------------------------------------
