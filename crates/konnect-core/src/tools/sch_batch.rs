@@ -32,7 +32,7 @@ use super::sch_components::{
     plan_component_and_item_deletions, set_property_value, ComponentDeleteTargetError,
 };
 use super::sch_wiring::{
-    add_stub_label, add_stub_wire, resolve_pin_endpoint, resolve_placed_pin, route_between,
+    add_stub_label, add_stub_wire, resolve_placed_pin, resolve_route_endpoint, route_between,
 };
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
@@ -128,7 +128,9 @@ pub fn tools() -> Vec<ToolDef> {
         tool!(
             "batch_connect_pins",
             "Connect multiple component pin pairs by reference and pin number, in a single \
-             file read/write cycle.",
+             file read/write cycle. Uses connect_pins route safety. Skips blocked or ambiguous \
+             pairs and saves safe pairs, not an all-or-nothing batch. connected_count counts \
+             saved pairs; connected and skipped identify input indexes for selective retry.",
             json!({
                 "type": "object",
                 "properties": {
@@ -847,18 +849,13 @@ async fn handle_batch_connect_pins(
 
     let (content, tree) = read_schematic(&sch_path)?;
     let expected = content.clone();
-    let instances = extract_symbol_instances(&tree);
-    let lib_syms = tree
-        .find("lib_symbols")
-        .map(|n| n.find_all("symbol"))
-        .unwrap_or_default();
-
     // Resolve every endpoint from the initial tree before any wire is
     // inserted -- symbols/lib_symbols never change as wires are added, so
     // this is safe to do up front instead of re-resolving per connection.
-    let mut resolved: Vec<(f64, f64, f64, f64)> = Vec::new();
+    let mut resolved = Vec::new();
     let mut errors: Vec<String> = Vec::new();
-    for conn in &connections {
+    let mut skipped = Vec::new();
+    for (index, conn) in connections.iter().enumerate() {
         let (Some(ref1), Some(pin1), Some(ref2), Some(pin2)) = (
             conn["ref1"].as_str(),
             conn["pin1"].as_str(),
@@ -866,32 +863,57 @@ async fn handle_batch_connect_pins(
             conn["pin2"].as_str(),
         ) else {
             errors.push("Missing ref1/pin1/ref2/pin2 in connection spec".into());
+            skipped.push(json!({"index": index, "kind": "invalid_arguments"}));
             continue;
         };
         match (
-            resolve_pin_endpoint(&instances, &lib_syms, ref1, pin1),
-            resolve_pin_endpoint(&instances, &lib_syms, ref2, pin2),
+            resolve_route_endpoint(&tree, ref1, pin1),
+            resolve_route_endpoint(&tree, ref2, pin2),
         ) {
-            (Ok((x1, y1)), Ok((x2, y2))) => resolved.push((x1, y1, x2, y2)),
-            (Err(e), _) | (_, Err(e)) => errors.push(e.to_string()),
+            (Ok((x1, y1)), Ok((x2, y2))) => {
+                resolved.push((
+                    index,
+                    format!("{ref1}.{pin1} -> {ref2}.{pin2}"),
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                ));
+            }
+            (Err(reason), _) | (_, Err(reason)) => {
+                errors.push(format!("connection {index}: {reason}"));
+                skipped.push(json!({"index": index, "kind": "plan_blocked", "reasons": [reason]}));
+            }
         }
     }
 
     // ponytail: re-parses content per wire; incremental tree edits if batches get huge.
     let mut new_content = content;
-    for (x1, y1, x2, y2) in &resolved {
-        new_content = route_between(new_content, *x1, *y1, *x2, *y2);
+    let mut connected = Vec::new();
+    for (index, pair, x1, y1, x2, y2) in &resolved {
+        match route_between(&new_content, *x1, *y1, *x2, *y2)? {
+            Ok(routed) => {
+                new_content = routed.content;
+                connected.push(json!({"index": index, "path": routed.path}));
+            }
+            Err(reasons) => {
+                errors.push(format!("{pair}: {}", reasons.join("; ")));
+                skipped.push(json!({"index": index, "kind": "plan_blocked", "reasons": reasons}));
+            }
+        }
     }
 
-    if !resolved.is_empty() {
+    if !connected.is_empty() {
         write_atomic_if_unchanged(&sch_path, &expected, &new_content)?;
     }
 
     let mut result = CallToolResult::json(&json!({
-        "connected_count": resolved.len(),
-        "errors": errors
+        "connected_count": connected.len(),
+        "errors": errors,
+        "connected": connected,
+        "skipped": skipped
     }));
-    result.is_error = resolved.is_empty() && !errors.is_empty();
+    result.is_error = connected.is_empty() && !errors.is_empty();
     Ok(result)
 }
 
@@ -2582,6 +2604,7 @@ mod batch_place_and_connect_tests {
 
     /// Six single-pin instances of a synthetic part, positioned so that
     /// connecting them by pin pairs produces a T-junction on the second pair.
+    /// R4 already shares R1's net, so the first route may legitimately pass it.
     fn multi_point_schematic() -> (tempfile::TempDir, std::path::PathBuf) {
         let pin_def = "\t\t\t(pin passive line (at 0 0 0) (length 0)\n\t\t\t\t(name \"~\" (effects (font (size 1.27 1.27))))\n\t\t\t\t(number \"1\" (effects (font (size 1.27 1.27))))\n\t\t\t)\n";
         let lib_sym = format!("\t\t(symbol \"Test:PT\"\n{pin_def}\t\t)\n");
@@ -2595,7 +2618,7 @@ mod batch_place_and_connect_tests {
         std::fs::write(
             &path,
             format!(
-                "(kicad_sch\n\t(version 20250610)\n\t(generator \"konnect\")\n\t(uuid \"3af69a4c-1faa-40bd-91dc-c4fc245c4cbd\")\n\t(lib_symbols\n{}\t)\n{}{}{}{}{}{})\n",
+                "(kicad_sch\n\t(version 20250610)\n\t(generator \"konnect\")\n\t(uuid \"3af69a4c-1faa-40bd-91dc-c4fc245c4cbd\")\n\t(lib_symbols\n{}\t)\n(label \"N\" (at 100 100 0))\n(label \"N\" (at 110 100 0))\n{}{}{}{}{}{})\n",
                 lib_sym,
                 inst("R1", 100.0, 100.0, "aaaaaaaa-0000-0000-0000-000000000001"),
                 inst("R2", 120.0, 100.0, "aaaaaaaa-0000-0000-0000-000000000002"),
