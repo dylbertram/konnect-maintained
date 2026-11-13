@@ -159,6 +159,15 @@ initialized by their module. A8 does not call that module's save_native,
 inspect, ordinary_texts or native_footprint functions, which depend on its
 main-only pcbnew global. A8 saves through its own post-isolation local import.
 
+Coordinator native attempt `cmd_ek51spw9yyuw` against the original `f3578fc`
+helper failed before launching the owned editor because KiCad 10.0.8
+`FOOTPRINT` has no `SetDescription`. This packet uses the exact
+`SetLibDescription` setter and matching `GetLibDescription` readback, without
+API-name fallbacks. The coordinator owns qualification against the installed
+SWIG source and inspection of that attempt's retained lifecycle evidence.
+The failed attempt is not a passing native gate, and the amended helper has
+not been executed here.
+
 The helper imports the fixture verbatim. A disposable accepted copy changes
 only through native pcbnew or public Konnect. A project-local native library
 copy removes the stock DIP's library-owned point through KiCad's model,
@@ -250,32 +259,65 @@ replacement, the control fails rather than claiming reproduction.
 ### Compile-first isolated loss binary
 
 Source review of the new Python helper and runner must precede execution.
-`native_footprint_children_loss_build.py` runs only in an admitted clean
-disposable source snapshot. Its sole transient Rust edit replaces exactly
+`native_footprint_children_loss_build.py` runs only in an admitted disposable
+source archive. Sanitized archives have no Git history or `.git`; neither
+the runner nor the native commands need Git. The coordinator must supply the
+actual archived source commit as required `--source-revision`, validated as
+a full 40-hex SHA. This revision is coordinator provenance, not something
+inferred or verified from Git in the archive. Never initialize Git or invent
+a revision to satisfy the argument. The runner inventories SHA-256 for every
+Rust source outside `ROOT/target` and `.git`, including production, build,
+test and example sources. It records before/control/restored/after manifests
+and rejects any drift beyond the one intended transient control edit.
+Its sole transient Rust edit replaces exactly
 `&targets, // A8 sync inventory targets` with
 `&[], // A8 sync inventory targets`. It does not change the refresh guard,
 replacement code, protobuf definitions, tests, assertions, library or fixture.
 No production Rust edit is part of this packet.
 
-The runner first requires the existing compile-first, nonzero-test positive
-Rust gate and builds a positive binary. It then builds the control in a
-separate target directory and copies that binary out. In `finally`, including
-after a failed control build, it restores the exact original source bytes,
-requires the restored positive Rust gate and rebuilds/copies the positive
-binary. Original/control source bytes, SHA-256 hashes, revision, build/test
-logs and both binary hashes are retained in the outside-source evidence root.
-The native helper checks this manifest, exact marker mutation hash, current
-restored source hash and supplied positive/control binary hashes before setup.
-This is auditable build provenance, not a native reproduction result.
+The runner first requires the same compile-first, nonzero-test positive Rust
+gate and builds a positive binary. All Cargo commands run sequentially using
+the existing warm `ROOT/target`, never separate cold target directories. The
+coordinator must admit exclusive use of that cache and source tree. No other
+build, test, formatter or mutation may run concurrently there. The runner
+requires `ROOT/target/debug/deps` to exist and forces `CARGO_TARGET_DIR` to
+that same `ROOT/target` for every Cargo command.
+
+It copies the baseline binary outside target as `baseline-konnect`, then
+builds and copies `control-konnect` before restoration. In `finally`, including
+after a failed control build, it restores exact original source bytes,
+rejects other Rust source drift and requires the restored positive Rust gate.
+It rebuilds/copies `positive-konnect` without overwriting either earlier copy.
+Paths and hashes for all three binaries, source manifests, original/control
+source bytes, revision and command logs remain in the outside-source evidence
+root. Identical-source baseline/restored binary hashes must match exactly.
+A mismatch fails admission pending investigation; nondeterminism is not
+silently accepted. The native helper checks current/restored source manifests,
+the exact marker mutation hash, matching positive hashes and the supplied
+positive/control binary hashes before setup. This is build provenance, not
+a native reproduction result.
+
+The admitted build job has a fixed 600-second budget. The runner shares one
+590-second command deadline across baseline, control and restored commands,
+reserving 10 seconds for exact restoration and evidence writes. There are no
+automatic retries, cold-cache fallbacks or timeout increases. If the budget
+expires, exact source restoration still runs, but a missing restored positive
+gate makes the packet fail. Stop the disposable worker and retain evidence;
+do not start another Cargo command or retry to manufacture acceptance.
 
 Run remotely under the coordinator's admitted build deadline and capacity
 limits. These commands are documentation only; this child ran none of them.
 `EVIDENCE` must resolve outside the disposable source snapshot.
+`SOURCE_REVISION` must be supplied by the coordinator's archive admission.
+Keep the runner's outer job limit at 600 seconds. Build the capture helper
+sequentially in its separately admitted bounded command, never concurrently.
 
 ```sh
 python3 crates/konnect-core/tests/native_footprint_children_loss_build.py \
-  --disposable-checkout --out "$EVIDENCE/loss-build"
-cargo build -p konnect-ipc --locked --example native_footprint_children_capture
+  --disposable-checkout --source-revision "$SOURCE_REVISION" \
+  --out "$EVIDENCE/loss-build"
+CARGO_TARGET_DIR="$PWD/target" cargo build -p konnect-ipc --locked \
+  --example native_footprint_children_capture
 ```
 
 ### Native launch commands
@@ -299,7 +341,7 @@ xvfb-run -a python3 "$GATE/a8-supervisor.py" \
   "$PWD/crates/konnect-core/tests/native_footprint_children_native.py" \
   --disposable-worker --konnect "$PWD/target/debug/konnect" \
   --capture-helper "$PWD/target/debug/examples/native_footprint_children_capture" \
-  --source-revision "$(git rev-parse HEAD)" --out "$EVIDENCE/native"
+  --source-revision "$SOURCE_REVISION" --out "$EVIDENCE/native"
 ```
 
 After the supervised command exits, independently verify the recorded root is
@@ -330,17 +372,19 @@ It runs the restored positive native gate before the loss control, and again
 in `finally`. Each invocation must independently pass the lifecycle/root audit.
 If cleanup fails, stop the worker and retain evidence; do not continue native
 execution with uncertain ownership. The restored Rust gate has already run
-inside the build runner regardless of native outcomes.
+inside the build runner regardless of native outcomes. Pass the coordinator's
+explicit archived source revision here too; do not query or create Git history.
 
 ```sh
-python3 - "$PWD" "$GATE" "$EVIDENCE" <<'PY'
-import json, shutil, subprocess, sys
+python3 - "$PWD" "$GATE" "$EVIDENCE" "$SOURCE_REVISION" <<'PY'
+import json, re, shutil, subprocess, sys
 from pathlib import Path
 
-root, gate, evidence = map(lambda p: Path(p).resolve(), sys.argv[1:])
+root, gate, evidence = map(lambda p: Path(p).resolve(), sys.argv[1:4])
+revision = sys.argv[4].lower()
+assert re.fullmatch(r"[0-9a-f]{40}", revision), "coordinator must supply full archive source SHA"
 gate.mkdir(parents=True, exist_ok=True)
 build = evidence / "loss-build"
-revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 helper = root / "crates/konnect-core/tests/native_footprint_children_native.py"
 supervisor = root / "crates/konnect-core/tests/support/pcb_export_supervisor.py"
 raw = root / "target/debug/examples/native_footprint_children_capture"

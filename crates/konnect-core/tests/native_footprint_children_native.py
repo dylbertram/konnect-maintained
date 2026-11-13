@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -125,9 +126,14 @@ def assert_untouched_raw(before, after, before_dir, after_dir, kiid):
 
 def control_build(args, binary):
     """Require the isolated build runner's restored-positive provenance."""
+    from native_footprint_children_loss_build import rust_sources
+
     evidence = json.loads(args.control_build_evidence.read_text())
     assert evidence["status"] == "passed", evidence
     assert evidence["source_revision"] == args.source_revision, evidence
+    assert rust_sources() == evidence["rust_sources_before"] == evidence["rust_sources_after"]
+    assert evidence["positive_binary_hashes_match"], evidence
+    assert evidence["baseline_binary_sha256"] == evidence["restored_binary_sha256"], evidence
     source = (ROOT / "crates/konnect-core/src/tools/pcb_sync.rs").read_bytes()
     assert hashlib.sha256(source).hexdigest() == evidence["original_source_sha256"], evidence
     old = b"&targets, // A8 sync inventory targets"
@@ -243,6 +249,9 @@ def main():
     parser.add_argument("--control-konnect", type=Path)
     parser.add_argument("--control-build-evidence", type=Path)
     args = parser.parse_args()
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", args.source_revision):
+        parser.error("--source-revision must be the coordinator's full 40-hex commit SHA")
+    args.source_revision = args.source_revision.lower()
     if args.mode == "sync-loss-control":
         if not args.control_konnect or not args.control_build_evidence:
             parser.error("sync-loss-control requires --control-konnect and --control-build-evidence")
@@ -312,7 +321,7 @@ def main():
                         removed.append(drawing.GetClass())
                         fp.Remove(drawing)
                 fp.SetFPID(pcbnew.LIB_ID("A8", name))
-                fp.SetDescription("a8 native library replacement")
+                fp.SetLibDescription("a8 native library replacement")
                 writer.FootprintSave(str(library), fp)
                 library_controls.append({"name": name, "removed_native_library_points": removed})
             report["native_library_controls"] = library_controls
@@ -448,7 +457,7 @@ def main():
             saved = pcbnew.LoadBoard(str(board))
             actual = {fp.GetReference(): fp for fp in saved.GetFootprints()}
             assert actual["R1"].GetValue() == "a8 desired value"
-            assert actual["R1"].GetDescription() == "a8 native library replacement"
+            assert actual["R1"].GetLibDescription() == "a8 native library replacement"
             shutil.copyfile(board, out / "after-safe-sync.kicad_pcb")
             final = capture(raw_binary, proxy_socket, board, out / "after-safe-sync", environment)
             assert_owned(final)
