@@ -62,9 +62,9 @@ fn default_dry_run() -> bool {
     true
 }
 
-struct Document {
-    before: String,
-    after: String,
+pub(super) struct Document {
+    pub before: String,
+    pub after: String,
 }
 
 struct Plan {
@@ -212,7 +212,10 @@ async fn transfer(args: &Value, ctx: &ToolContext) -> Result<CallToolResult> {
     Ok(CallToolResult::json(&plan.report))
 }
 
-async fn closed_board(ctx: &ToolContext, board: &Path) -> Result<Option<CallToolResult>> {
+pub(super) async fn closed_board(
+    ctx: &ToolContext,
+    board: &Path,
+) -> Result<Option<CallToolResult>> {
     use super::live_board::{self, LiveBoard};
     match live_board::observe(ctx, board, |_, _| Ok(())).await? {
         LiveBoard::NotOpen { .. } | LiveBoard::NeverReached(_) =>
@@ -603,7 +606,7 @@ fn without_root_uuid(path: &str) -> Result<String> {
     Ok(format!("/{tail}"))
 }
 
-fn validate_instances(
+pub(super) fn validate_instances(
     path: &Path,
     source: &str,
     project: &str,
@@ -621,7 +624,10 @@ fn validate_instances(
         .map_err(|error| anyhow::anyhow!("Stale hierarchy state: {error:?}"))
 }
 
-fn load_document(path: &Path, documents: &mut BTreeMap<PathBuf, Document>) -> Result<()> {
+pub(super) fn load_document(
+    path: &Path,
+    documents: &mut BTreeMap<PathBuf, Document>,
+) -> Result<()> {
     if !documents.contains_key(path) {
         let before = read_consistent(path)?;
         documents.insert(
@@ -635,7 +641,7 @@ fn load_document(path: &Path, documents: &mut BTreeMap<PathBuf, Document>) -> Re
     Ok(())
 }
 
-fn collect_hierarchy(
+pub(super) fn collect_hierarchy(
     path: &Path,
     instance: Option<String>,
     directory: &Path,
@@ -689,7 +695,7 @@ fn collect_hierarchy(
     Ok(())
 }
 
-fn property<'a>(tree: &'a SexpNode, name: &str) -> Option<&'a str> {
+pub(super) fn property<'a>(tree: &'a SexpNode, name: &str) -> Option<&'a str> {
     tree.find_all("property")
         .into_iter()
         .find(|node| node.get(1).and_then(SexpNode::as_str) == Some(name))?
@@ -697,7 +703,7 @@ fn property<'a>(tree: &'a SexpNode, name: &str) -> Option<&'a str> {
         .as_str()
 }
 
-fn collect_uuids(tree: &SexpNode, ids: &mut BTreeSet<String>) -> Result<()> {
+pub(super) fn collect_uuids(tree: &SexpNode, ids: &mut BTreeSet<String>) -> Result<()> {
     if tree.head() == Some("uuid") {
         let uuid = tree
             .get(1)
@@ -1224,18 +1230,25 @@ struct ErcPinIdentity {
     repeated: bool,
 }
 
-struct ErcIdentityIndex {
+pub(super) struct ErcIdentityIndex {
     persisted: BTreeSet<String>,
     pins: Vec<ErcPinIdentity>,
 }
 
 impl ErcIdentityIndex {
     fn build(plan: &Plan, after: bool) -> Result<Self> {
+        Self::build_documents(&plan.documents, after)
+    }
+
+    pub(super) fn build_documents(
+        documents: &BTreeMap<PathBuf, Document>,
+        after: bool,
+    ) -> Result<Self> {
         let mut index = Self {
             persisted: BTreeSet::new(),
             pins: Vec::new(),
         };
-        for (path, document) in &plan.documents {
+        for (path, document) in documents {
             if path.extension().is_none_or(|ext| ext != "kicad_sch") {
                 continue;
             }
@@ -1278,7 +1291,7 @@ impl ErcIdentityIndex {
         Ok(index)
     }
 
-    fn identity(&self, item: &cli::ReportItem) -> Result<String> {
+    pub(super) fn identity(&self, item: &cli::ReportItem) -> Result<String> {
         if let Some(uuid) = &item.uuid {
             if self.persisted.contains(uuid) {
                 return Ok(format!("uuid:{uuid}"));
@@ -1356,7 +1369,7 @@ type NetlistPartitions = (
     BTreeSet<BTreeSet<(String, String)>>,
 );
 
-fn netlist_partitions(source: &str) -> Result<NetlistPartitions> {
+pub(super) fn netlist_partitions(source: &str) -> Result<NetlistPartitions> {
     let tree = parse_sexp(source)?;
     ensure!(
         tree.head() == Some("export"),
