@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Reviewed-source Windows/macOS rename checks; no installs or SMB setup.
 
-Each invocation has one 3000s deadline, commands have at most 1200s, and failed
-commands are never retried. Evidence and targets must live outside the checkout.
+Both modes share the job's fixed deadline; core reserves 300s for UNC. Commands
+have at most 1200s and failures are never retried. Evidence and targets are external.
 UNC runs only after a successful core invocation in the same GitHub Actions job.
 All subprocess output is retained. This runner does not claim native KiCad
 coverage from Rust tests, including tests that skip unavailable native tools.
@@ -30,7 +30,7 @@ import traceback
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 START = time.monotonic()
-DEADLINE = START + 3000
+DEADLINE = START  # Fail closed until main validates the shared job deadline.
 RESERVE = 500_000_000
 HEADROOM = 256 * 1024 * 1024
 MIN_BUDGET = 2 * 1024**3
@@ -203,10 +203,13 @@ class Runner:
         })
         self.report["commands"] = []
         self.report["probes"] = []
+        self.cleanup_uncertain = False
+        self.report["cleanup_uncertain"] = False
         self.known = {}
 
     def probe(self, command):
         """Bounded read-only macOS OS probe, in its own group, logged separately."""
+        require(not self.cleanup_uncertain, "no new commands after uncertain owned cleanup")
         require(time.monotonic() < DEADLINE, "invocation deadline before OS probe")
         record = {"command": command, "timeout_seconds": 3, "owned_cleanup": False}
         self.report["probes"].append(record)
@@ -234,27 +237,40 @@ class Runner:
         finally:
             # A successful leader must not leave helper descendants either.
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-                record["unexpected_group_after_exit"] = process.poll() is not None
-            except ProcessLookupError:
-                record["unexpected_group_after_exit"] = False
-            if process.poll() is None:
-                process.wait(timeout=3)
-                record["timed_out"] = True
-            try:
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
-                record["owned_cleanup"] = True
-            if not record["owned_cleanup"] or record["unexpected_group_after_exit"]:
-                record["status"] = "failed"
-            with (self.out / "os-probes.jsonl").open("a", encoding="utf-8") as log:
-                log.write(json.dumps(record, sort_keys=True) + "\n")
-            if record.get("status") != "passed":
-                tail = record.get("stdout", "") + record.get("stderr", "")
-                print(tail[-12000:], file=sys.stderr)
-            # Keep full census output on disk, not in the long-lived report.
-            record.pop("stdout", None)
-            record.pop("stderr", None)
+                try:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        record["unexpected_group_after_exit"] = process.poll() is not None
+                    except ProcessLookupError:
+                        record["unexpected_group_after_exit"] = False
+                finally:
+                    try:
+                        if process.poll() is None:
+                            process.kill()
+                    finally:
+                        process.wait(timeout=3)
+                        record["leader_reaped"] = True
+                try:
+                    os.killpg(process.pid, 0)
+                except ProcessLookupError:
+                    record["owned_cleanup"] = True
+            except BaseException as error:
+                record.update(status="failed", cleanup_error=repr(error))
+                raise
+            finally:
+                if not record["owned_cleanup"]:
+                    self.cleanup_uncertain = True
+                    self.report["cleanup_uncertain"] = True
+                if not record["owned_cleanup"] or record.get("unexpected_group_after_exit", False):
+                    record["status"] = "failed"
+                with (self.out / "os-probes.jsonl").open("a", encoding="utf-8") as log:
+                    log.write(json.dumps(record, sort_keys=True) + "\n")
+                if record.get("status") != "passed":
+                    tail = record.get("stdout", "") + record.get("stderr", "")
+                    print(tail[-12000:], file=sys.stderr)
+                # Keep full census output on disk, not in the long-lived report.
+                record.pop("stdout", None)
+                record.pop("stderr", None)
             require(record["owned_cleanup"], f"OS probe group still present: {process.pid}")
             require(not record["unexpected_group_after_exit"],
                     f"OS probe left descendants: {command}")
@@ -324,6 +340,7 @@ class Runner:
         return sorted(selected), rss, escaped
 
     def run(self, label, command, timeout=1200):
+        require(not self.cleanup_uncertain, "no new commands after uncertain owned cleanup")
         require(0 < timeout <= 1200, "invalid command deadline")
         require(time.monotonic() < DEADLINE, "invocation deadline exhausted")
         self.capacity(initial=command[0] == "cargo")
@@ -430,24 +447,32 @@ class Runner:
                 watchdog.join()
             try:
                 if process is not None and not audit["owned_cleanup"]:
-                    if job:
-                        job.kill()
-                    else:
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        # Only PIDs observed in this owned tree, never global kill.
-                        owned_now = self.mac_census(process.pid)[0]
-                        for pid in owned_now:
+                    try:
+                        if job:
+                            job.kill()
+                        else:
                             try:
-                                os.kill(pid, signal.SIGKILL)
+                                os.killpg(process.pid, signal.SIGKILL)
                             except ProcessLookupError:
                                 pass
-                    if process.poll() is None:
-                        # Also handles a suspended child if Job assignment failed.
-                        process.kill()
-                    process.wait(timeout=5)
+                            require(not self.cleanup_uncertain,
+                                    "cannot census after uncertain owned probe cleanup")
+                            # Only live identities observed in this owned tree.
+                            owned_now = self.mac_census(process.pid)[0]
+                            for pid in owned_now:
+                                try:
+                                    os.kill(pid, signal.SIGKILL)
+                                except ProcessLookupError:
+                                    pass
+                    finally:
+                        # Census/kill failure must never bypass leader reaping.
+                        try:
+                            if process.poll() is None:
+                                # Also covers failed assignment of a suspended child.
+                                process.kill()
+                        finally:
+                            process.wait(timeout=5)
+                            audit["leader_reaped"] = True
                     cleanup_end = time.monotonic() + 5
                     while True:
                         pids = job.census()[0] if job else self.mac_census(process.pid)[0]
@@ -460,6 +485,8 @@ class Runner:
                 if process is None:
                     audit["owned_cleanup"] = True
             except BaseException as error:
+                self.cleanup_uncertain = True
+                self.report["cleanup_uncertain"] = True
                 audit.update(status="failed", cleanup_error=repr(error))
                 if failure is None:
                     raise
@@ -469,6 +496,8 @@ class Runner:
                         job.close()
                         audit["job_closed"] = True
                     except BaseException as error:
+                        self.cleanup_uncertain = True
+                        self.report["cleanup_uncertain"] = True
                         audit.update(status="failed", job_close_error=repr(error))
                 audit["elapsed_seconds"] = round(time.monotonic() - START, 3)
                 save(audit_path, audit)
@@ -602,6 +631,7 @@ def verify_native_toolchain(report):
 
 
 def main():
+    global DEADLINE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--evidence", type=Path, required=True)
@@ -615,6 +645,7 @@ def main():
     report = {
         "status": "incomplete", "mode": args.mode, "source_sha": args.source_sha.lower(),
         "deadline_seconds": 3000, "command_max_seconds": 1200,
+        "validation_job_deadline_epoch": os.environ.get("VALIDATION_JOB_DEADLINE_EPOCH"),
         "workflow_sha": os.environ.get("VALIDATION_WORKFLOW_SHA"),
         "github_workflow_sha": os.environ.get("GITHUB_WORKFLOW_SHA"),
         "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"),
@@ -630,6 +661,29 @@ def main():
     before = None
     primary = None
     try:
+        raw_deadline = report["validation_job_deadline_epoch"]
+        require(re.fullmatch(r"[0-9]{1,12}", raw_deadline or ""),
+                "VALIDATION_JOB_DEADLINE_EPOCH must be an explicit integer Unix epoch")
+        job_deadline_epoch = int(raw_deadline)
+        wall_now = time.time()
+        mono_now = time.monotonic()
+        shared_remaining = job_deadline_epoch - wall_now
+        report["validation_job_deadline_epoch"] = job_deadline_epoch
+        require(0 < shared_remaining <= 3005,
+                "shared job deadline must be future and within 3000s plus 5s clock tolerance")
+        shared_mono = mono_now + shared_remaining
+        unc_reserve = 300 if args.mode == "core" else 0
+        DEADLINE = min(START + 3000, shared_mono - unc_reserve) if unc_reserve else shared_mono
+        report.update(
+            deadline_observed_epoch=wall_now,
+            shared_remaining_seconds=round(shared_remaining, 3),
+            unc_reserved_seconds=unc_reserve,
+            effective_deadline_epoch=wall_now + DEADLINE - mono_now,
+            invocation_budget_seconds=round(DEADLINE - mono_now, 3),
+            deadline_clock_tolerance_seconds=5,
+        )
+        require(DEADLINE - time.monotonic() > 60,
+                "insufficient shared job time for execution plus final source audit; not extended")
         require(sys.platform in ("win32", "darwin"), "only Windows/macOS runners are supported")
         require(sys.version_info >= (3, 9), "Python 3.9+ required")
         require(re.fullmatch(r"[0-9a-fA-F]{40}", report["workflow_sha"] or ""),
@@ -662,7 +716,8 @@ def main():
         if args.mode == "core":
             target = Path(tempfile.mkdtemp(prefix="konnect-rename-target-", dir=temp)).resolve()
             marker = {"source_sha": args.source_sha.lower(), "job_identity": identity,
-                      "core_evidence": str(out), "host_triple": host_triple}
+                      "core_evidence": str(out), "host_triple": host_triple,
+                      "job_deadline_epoch": job_deadline_epoch}
             save(target / ".konnect-rename-owned.json", marker)
         else:
             require(sys.platform == "win32", "UNC checks require Windows")
@@ -678,8 +733,9 @@ def main():
                     and core["workflow_sha"] == report["workflow_sha"]
                     and core["host"]["os"] == report["host"]["os"]
                     and core["host"]["arch"] == report["host"]["arch"]
-                    and core["verified_host_triple"] == host_triple,
-                    "UNC cache source/job/workflow/host mismatch")
+                    and core["verified_host_triple"] == host_triple
+                    and core["validation_job_deadline_epoch"] == job_deadline_epoch,
+                    "UNC cache source/job/workflow/host/shared-deadline mismatch")
             require(json.loads((core_out / "source-after.json").read_text(encoding="utf-8")) == before,
                     "UNC source differs from successful core source")
             target = Path(core["cargo_target_dir"]).resolve(strict=True)
@@ -687,8 +743,9 @@ def main():
                     "UNC target is not a core-created external runner target")
             marker = json.loads((target / ".konnect-rename-owned.json").read_text(encoding="utf-8"))
             require(marker == {"source_sha": args.source_sha.lower(), "job_identity": identity,
-                               "core_evidence": str(core_out), "host_triple": host_triple},
-                    "UNC target ownership/host mismatch")
+                               "core_evidence": str(core_out), "host_triple": host_triple,
+                               "job_deadline_epoch": job_deadline_epoch},
+                    "UNC target ownership/host/shared-deadline mismatch")
             require(bool(os.environ.get("KONNECT_RENAME_UNC_ROOT")), "workflow must provision UNC root")
             report["reused_core_evidence"] = str(core_out)
         runner.env["CARGO_TARGET_DIR"] = str(target)
@@ -766,7 +823,17 @@ def main():
         report.update(status="failed", error=repr(error), traceback=traceback.format_exc())
     finally:
         try:
-            if before is not None:
+            if runner.cleanup_uncertain or any(
+                not entry.get("owned_cleanup", False)
+                for entry in report["commands"] + report["probes"]
+            ):
+                runner.cleanup_uncertain = True
+                report.update(
+                    status="failed", cleanup_uncertain=True,
+                    source_unchanged="unverified: owned cleanup uncertain; no final source commands launched",
+                    final_source_audit_skipped="uncertain owned process cleanup",
+                )
+            elif before is not None:
                 after = source_snapshot(runner, "after", args.source_sha.lower())
                 report["source_manifest_after"] = "source-after.json"
                 require(after == before, "tracked source manifest changed during validation")
@@ -786,8 +853,16 @@ def main():
                 report["status"] = "passed"
         except BaseException as error:
             report.update(status="failed", final_audit_error=repr(error))
+            if report.get("source_unchanged") is not True:
+                report["source_unchanged"] = "unverified: final source audit did not complete"
             if primary is None:
                 primary = error
+        report["cleanup_uncertain"] = runner.cleanup_uncertain or any(
+            not entry.get("owned_cleanup", False)
+            for entry in report["commands"] + report["probes"]
+        )
+        if report["cleanup_uncertain"]:
+            report["status"] = "failed"
         report["elapsed_seconds"] = round(time.monotonic() - START, 3)
         report["target_cleanup"] = "retained owned external target for same-job UNC; runner disposal owns removal"
         save(out / "report.json", report)
