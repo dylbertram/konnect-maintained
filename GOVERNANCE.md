@@ -68,6 +68,9 @@ full reviewed source SHA. Checkout disables persisted credentials. The job
 records both the workflow SHA and tested SHA, uses pinned tool/actions versions,
 checks available capacity before setup, bounds cargo concurrency and process
 lifetime, monitors the 500 MB memory reserve, and retains evidence for seven days.
+One shared 50-minute deadline starts before tool setup. Core work reserves five
+minutes for UNC, and UNC cannot create a share without at least three minutes
+remaining. The 60-minute job limit leaves additional cleanup/upload time.
 
 The first gates build the full core, execute the rename filesystem regressions,
 and check the workspace. Windows additionally uses a temporary localhost SMB

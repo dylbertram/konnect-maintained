@@ -36,6 +36,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $deadline = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 3000
+          "VALIDATION_JOB_DEADLINE_EPOCH=$deadline" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           if ($env:TESTED_SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw "Full lowercase source SHA required" }
           $os = Get-CimInstance Win32_OperatingSystem
           $available = [long]$os.FreePhysicalMemory * 1024
@@ -76,6 +78,10 @@ jobs:
           $evidence = Join-Path $env:RUNNER_TEMP "rename-evidence"
           $created = $false
           $audit = @{ share = $name; directory = $directory; created = $false; removed = $false }
+          $remainingSeconds = [long]$env:VALIDATION_JOB_DEADLINE_EPOCH - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          if ($remainingSeconds -lt 180 -or $remainingSeconds -gt 3000) { throw "Insufficient shared job deadline for UNC and cleanup" }
+          $audit.deadline_epoch = [long]$env:VALIDATION_JOB_DEADLINE_EPOCH
+          $audit.seconds_before_share = $remainingSeconds
           New-Item -ItemType Directory -Path $directory | Out-Null
           try {
             if ((Get-Service LanmanServer).Status -ne "Running") { throw "SMB server unavailable; no service will be started" }
@@ -122,7 +128,9 @@ jobs:
           set -euo pipefail
           [[ "$TESTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           python3 - <<'PY'
-          import json, os, re, shutil, subprocess
+          import json, os, re, shutil, subprocess, time
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+              output.write(f"VALIDATION_JOB_DEADLINE_EPOCH={int(time.time()) + 3000}\n")
           text = subprocess.check_output(["vm_stat"], text=True)
           page = int(re.search(r"page size of (\d+) bytes", text)[1])
           counts = {key: int(value) for key, value in re.findall(r"^([^:\n]+):\s+(\d+)", text, re.M)}
@@ -169,7 +177,9 @@ jobs:
           set -euo pipefail
           [[ "$TESTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           python3 - <<'PY'
-          import json, os, re, shutil, subprocess
+          import json, os, re, shutil, subprocess, time
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+              output.write(f"VALIDATION_JOB_DEADLINE_EPOCH={int(time.time()) + 3000}\n")
           text = subprocess.check_output(["vm_stat"], text=True)
           page = int(re.search(r"page size of (\d+) bytes", text)[1])
           counts = {key: int(value) for key, value in re.findall(r"^([^:\n]+):\s+(\d+)", text, re.M)}
