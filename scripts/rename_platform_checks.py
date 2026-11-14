@@ -750,13 +750,58 @@ WINDOWS_PROBE_SOURCE = b"int konnect_rename_compiler_probe(void) { return 0; }\n
 
 def windows_policy_evidence_path():
     raw = os.environ.get("VALIDATION_WINDOWS_POLICY_EVIDENCE")
-    require(raw and Path(raw).is_absolute(),
-            "Windows requires absolute VALIDATION_WINDOWS_POLICY_EVIDENCE from workflow apply")
+    require(raw and Path(raw).is_absolute() and Path(raw).name == "policy-apply.json",
+            "Windows requires absolute VALIDATION_WINDOWS_POLICY_EVIDENCE ending in policy-apply.json")
+    temp_raw = os.environ.get("RUNNER_TEMP")
+    require(temp_raw and Path(temp_raw).is_absolute(), "absolute RUNNER_TEMP required for policy proof")
+    temp = Path(temp_raw).resolve(strict=True)
     path = Path(raw).resolve(strict=True)
-    require(not inside(path, ROOT) and path.is_file(),
-            "Windows policy evidence must be an existing external file")
-    # The policy author owns the schema and apply/restore checks. Do not read it.
+    require(temp.is_dir() and inside(path, temp) and not inside(path, ROOT)
+            and path.name == "policy-apply.json" and path.is_file(),
+            "policy-apply.json must be under RUNNER_TEMP and outside checkout")
     return path
+
+
+def windows_policy_proof(runner):
+    """Validate the frozen apply/snapshot evidence, without registry access."""
+    apply_path = windows_policy_evidence_path()
+    state_path = (apply_path.parent / "policy-state.json").resolve(strict=True)
+    require(state_path.parent == apply_path.parent and state_path.name == "policy-state.json"
+            and state_path.is_file(), "policy-state.json must be in the same evidence directory")
+
+    def bounded_json(path):
+        with path.open("rb") as handle:
+            raw = handle.read(32769)
+        require(0 < len(raw) <= 32768, f"policy JSON exceeds bounded size: {path.name}")
+        value = json.loads(raw.decode("utf-8"))
+        require(isinstance(value, dict), f"policy JSON must be an object: {path.name}")
+        return value, hashlib.sha256(raw).hexdigest()
+
+    applied, apply_sha = bounded_json(apply_path)
+    snapshot, state_sha = bounded_json(state_path)
+    identity = {key: os.environ.get(key) for key in (
+        "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB",
+        "VALIDATION_WORKFLOW_SHA", "TESTED_SOURCE_SHA"
+    )}
+    require(all(identity.values()), "policy proof requires explicit workflow/source/job identity")
+    require(identity["TESTED_SOURCE_SHA"].lower() == runner.report["source_sha"]
+            and identity["VALIDATION_WORKFLOW_SHA"].lower() == runner.report["workflow_sha"],
+            "policy environment identity differs from the required tested source/workflow SHA")
+    identity["evidence"] = str(apply_path.parent)
+    apply_identity = applied.get("identity")
+    require(applied.get("status") == "applied" and isinstance(apply_identity, dict)
+            and all(apply_identity.get(key) == value for key, value in identity.items()),
+            "policy apply status/identity does not match this source/workflow/job/evidence")
+    policy = ["HKLM", r"Software\Policies\Microsoft\VisualStudio\SQM", "OptIn", "64"]
+    require(type(snapshot.get("version")) is int and snapshot["version"] == 1
+            and snapshot.get("identity") == apply_identity and snapshot.get("policy") == policy
+            and snapshot.get("intent") == "set_REG_DWORD_0",
+            "policy snapshot version/identity/target/intent differs from the frozen schema")
+    return {
+        "status": "validated", "apply_path": str(apply_path), "apply_sha256": apply_sha,
+        "state_path": str(state_path), "state_sha256": state_sha,
+        "identity": apply_identity, "version": 1, "policy": policy, "intent": "set_REG_DWORD_0",
+    }
 
 
 def windows_image_version(path):
@@ -808,14 +853,19 @@ def windows_compiler_probe(runner, target):
         "source_sha": runner.report["source_sha"], "job_identity": runner.report["job_identity"],
         "job_deadline_epoch": runner.report["validation_job_deadline_epoch"],
         "evidence_path": str(evidence),
-        "policy_verification": "workflow-owned apply/restore; evidence path only, JSON not read",
+        "policy_verification": (
+            "pending apply/snapshot validation; registry restoration workflow-owned"
+        ),
         "owned_directory_removed": "not created",
     }
     runner.report["windows_compiler_probe"] = audit
     owned = None
     try:
-        policy_path = windows_policy_evidence_path()
-        audit["policy_evidence_path"] = str(policy_path)
+        audit["policy_proof"] = windows_policy_proof(runner)
+        audit["policy_evidence_path"] = audit["policy_proof"]["apply_path"]
+        audit["policy_verification"] = (
+            "validated apply/snapshot schema, identity and hashes; registry restoration workflow-owned"
+        )
         program_files = runner.env.get("ProgramFiles(x86)")
         require(program_files and Path(program_files).is_absolute(),
                 "absolute ProgramFiles(x86) required for fixed vswhere location")
@@ -864,6 +914,8 @@ def windows_compiler_probe(runner, target):
                 pass
             audit.update(probe_source_path=str(source), object_path=str(obj),
                          probe_source_sha256=digest(source))
+            require(windows_policy_proof(runner) == audit["policy_proof"],
+                    "policy apply/snapshot proof changed before compiler probe")
             runner.capacity(initial=True)
             compile_log = runner.run("windows-compiler-probe", [
                 str(compiler), "/nologo", "/c", "/TC", "/GS-", f"/Fo{obj}", str(source),
@@ -875,6 +927,8 @@ def windows_compiler_probe(runner, target):
             require(digest(compiler) == compiler_manifest["sha256"]
                     and digest(version_file) == compiler_manifest["toolset_version_file_sha256"],
                     "compiler/toolset identity changed during probe")
+            require(windows_policy_proof(runner) == audit["policy_proof"],
+                    "policy apply/snapshot proof changed during compiler probe")
             audit.update(object_bytes=obj.stat().st_size, object_sha256=digest(obj),
                          compile_log=str(compile_log))
         audit["owned_directory_removed"] = not owned.exists()
@@ -899,8 +953,10 @@ def require_core_compiler_probe(core, core_out, runner):
             and probe.get("job_identity") == runner.report["job_identity"]
             and probe.get("job_deadline_epoch") == runner.report["validation_job_deadline_epoch"],
             "UNC requires verified successful same-job Windows core compiler probe")
-    require(probe.get("policy_evidence_path") == str(windows_policy_evidence_path()),
-            "UNC policy evidence path differs from the core probe state")
+    policy_proof = windows_policy_proof(runner)
+    require(probe.get("policy_evidence_path") == policy_proof["apply_path"]
+            and probe.get("policy_proof") == policy_proof,
+            "UNC policy apply/snapshot proof differs from the validated core probe state")
     state = core_out / "windows-compiler-probe.json"
     require(probe.get("evidence_path") == str(state)
             and json.loads(state.read_text(encoding="utf-8")) == probe,
