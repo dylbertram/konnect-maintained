@@ -165,11 +165,13 @@ def restore(reg, snapshot):
             "Restoration verification failed")
 
 
-def restore_report(reg, directory, identity, snapshot):
-    report = {"identity": identity, "not_applied": snapshot is None, "status": "restored"}
+def restore_report(reg, directory, identity, snapshot=None):
+    report = {"identity": identity, "status": "restored"}
     try:
-        if snapshot is not None:
-            restore(reg, snapshot)
+        if snapshot is None:
+            snapshot = load(directory / STATE)
+        validate(snapshot, identity)
+        restore(reg, snapshot)
     except BaseException as error:
         report.update(status="failed", cleanup_uncertain=True, **failure(error))
         save(directory, "policy-restore.json", report)
@@ -187,12 +189,7 @@ def main():
 
     if args.action == "restore":
         directory.mkdir(parents=True, exist_ok=True)
-        snapshot = None
-        plain_path(directory / STATE)
-        if (directory / STATE).exists():
-            snapshot = load(directory / STATE)
-            validate(snapshot, identity)
-        restore_report(reg, directory, identity, snapshot)
+        restore_report(reg, directory, identity)
     else:
         # A fresh directory prevents accidentally adopting another trial's evidence.
         directory.mkdir(parents=True, exist_ok=False)
