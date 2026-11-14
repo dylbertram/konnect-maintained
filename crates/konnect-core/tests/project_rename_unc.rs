@@ -17,8 +17,7 @@ mod windows {
     const CHILD: &str = include_str!("fixtures/multichannel_channel_strip.kicad_sch");
     const PRO: &str = include_str!("fixtures/multichannel_mixer.kicad_pro");
     const BOARD: &str = include_str!("fixtures/specctra_two_resistors.kicad_pcb");
-    const PRL: &str =
-        r#"{"name":"multichannel_mixer","file":"multichannel_mixer.kicad_prl","unrelated":"keep-A"}"#;
+    const PRL: &str = r#"{"name":"multichannel_mixer","file":"multichannel_mixer.kicad_prl","unrelated":"keep-A"}"#;
 
     struct Fixture {
         temp: tempfile::TempDir,
@@ -240,6 +239,7 @@ mod windows {
                 "native_kicad_or_gui": false,
             })
         );
-        ipc.close().expect("remove only this owned local IPC directory");
+        ipc.close()
+            .expect("remove only this owned local IPC directory");
     }
 }

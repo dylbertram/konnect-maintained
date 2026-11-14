@@ -172,7 +172,10 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     assert_eq!(config["env"]["CARGO_BUILD_JOBS"], 2);
     assert_eq!(config["env"]["CMAKE_BUILD_PARALLEL_LEVEL"], 2);
     assert_eq!(config["env"]["MSBUILDDISABLENODEREUSE"], 1);
-    assert_eq!(config["env"]["TESTED_SOURCE_SHA"], "${{ inputs.source_sha }}");
+    assert_eq!(
+        config["env"]["TESTED_SOURCE_SHA"],
+        "${{ inputs.source_sha }}"
+    );
     assert_eq!(
         config["env"]["VALIDATION_WORKFLOW_SHA"],
         "${{ github.workflow_sha }}"
@@ -198,6 +201,8 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         let preflight = steps[0]["run"].as_str().unwrap();
         assert!(preflight.contains("VALIDATION_JOB_DEADLINE_EPOCH"));
         assert!(preflight.contains("3000"));
+        assert!(preflight.contains("2915919104"));
+        assert!(preflight.contains("preflight-capacity.json"));
         let checkout = steps
             .iter()
             .find(|step| {
@@ -238,6 +243,13 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         .iter()
         .find(|step| step["name"] == "Test an owned loopback UNC share")
         .unwrap();
+    for key in [
+        "CARGO_BUILD_JOBS",
+        "CMAKE_BUILD_PARALLEL_LEVEL",
+        "RUST_TEST_THREADS",
+    ] {
+        assert_eq!(jobs["macos-arm"]["env"][key], 1);
+    }
     let script = unc["run"].as_str().unwrap();
     for required in [
         "New-SmbShare",
@@ -252,7 +264,10 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         "--evidence \"$evidence/unc\"",
         "unc-share-lifecycle.json",
     ] {
-        assert!(script.contains(required), "missing UNC boundary: {required}");
+        assert!(
+            script.contains(required),
+            "missing UNC boundary: {required}"
+        );
     }
     assert!(unc.get("if").is_none());
     assert!(unc.get("continue-on-error").is_none());
