@@ -307,6 +307,14 @@ fn windows_registry_trial_is_restored_before_evidence_upload() {
     let upload = position("Retain Windows evidence");
     assert!(apply < core && core < unc && unc < restore && restore < upload);
     assert_eq!(steps[apply]["id"], "windows_policy");
+    assert!(steps[apply]["run"]
+        .as_str()
+        .unwrap()
+        .contains("VALIDATION_WINDOWS_POLICY_EVIDENCE="));
+    assert!(steps[apply]["run"]
+        .as_str()
+        .unwrap()
+        .contains("$env:GITHUB_ENV"));
     assert!(steps[apply].get("if").is_none());
     assert_eq!(
         steps[restore]["if"],

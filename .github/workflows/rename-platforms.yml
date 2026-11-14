@@ -87,6 +87,7 @@ jobs:
         run: |
           python scripts/rename_windows_policy.py --action apply --evidence "$env:RUNNER_TEMP/rename-evidence/policy"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VALIDATION_WINDOWS_POLICY_EVIDENCE=$env:RUNNER_TEMP/rename-evidence/policy/policy-apply.json" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build core and run native filesystem tests
         shell: pwsh
         run: |
