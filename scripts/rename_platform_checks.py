@@ -86,11 +86,24 @@ class WindowsJob:
         k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         k.OpenProcess.restype = wintypes.HANDLE
         k.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        k.IsProcessInJob.argtypes = [
+            wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)
+        ]
+        k.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)
+        ]
+        k.GetProcessTimes.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(wintypes.FILETIME),
+            ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME),
+            ctypes.POINTER(wintypes.FILETIME),
+        ]
         self.psapi.GetProcessMemoryInfo.argtypes = [
             wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD
         ]
         self.handle = k.CreateJobObjectW(None, None)
         require(self.handle, f"CreateJobObjectW: {ctypes.get_last_error()}")
+        self.identities = {}
+        self.last_census = None
 
         class BasicLimits(ctypes.Structure):
             _fields_ = [
@@ -131,7 +144,7 @@ class WindowsJob:
         resume.restype = ctypes.c_long
         require(resume(handle) == 0, "NtResumeProcess failed")
 
-    def census(self):
+    def member_pids(self):
         # JOBOBJECT_BASIC_PROCESS_ID_LIST uses ULONG counts followed by ULONG_PTRs.
         buffer = ctypes.create_string_buffer(65536)
         require(self.kernel.QueryInformationJobObject(
@@ -140,7 +153,14 @@ class WindowsJob:
         assigned, listed = struct.unpack_from("II", buffer.raw)
         require(assigned == listed and listed <= 4096, "job census truncated/oversize")
         pointer = "Q" if ctypes.sizeof(ctypes.c_size_t) == 8 else "I"
-        pids = list(struct.unpack_from(pointer * listed, buffer.raw, 8)) if listed else []
+        return list(struct.unpack_from(pointer * listed, buffer.raw, 8)) if listed else []
+
+    def census(self):
+        # Retain partial metadata if inspection fails before returning a sample.
+        members = []
+        self.last_census = {"members": members, "status": "incomplete"}
+        pids = self.member_pids()
+        self.last_census["pids"] = pids
 
         class MemoryCounters(ctypes.Structure):
             _fields_ = [
@@ -152,29 +172,97 @@ class WindowsJob:
 
         rss = 0
         for pid in pids:
+            member = {"pid": pid, "image_path": None, "creation_filetime_100ns": None,
+                      "exit_state": "unverified", "errors": []}
+            members.append(member)
             handle = self.kernel.OpenProcess(0x410, False, pid)
             if not handle:
-                # A process may exit between the job snapshot and OpenProcess.
-                require(ctypes.get_last_error() == 87,
-                        f"cannot inspect owned PID {pid}: {ctypes.get_last_error()}")
+                error = ctypes.get_last_error()
+                member["errors"].append({"api": "OpenProcess", "winerror": error})
+                # Do not attribute a reused PID to the earlier job snapshot.
+                still_listed = pid in self.member_pids()
+                member.update(still_listed_in_job=still_listed,
+                              exit_state="unknown_after_job_snapshot")
+                require(not still_listed, f"cannot inspect current owned PID {pid}: {error}")
+                member["observation"] = "no longer listed; may have exited between probes"
                 continue
             try:
+                owned = wintypes.BOOL()
+                ownership_ok = self.kernel.IsProcessInJob(handle, self.handle, ctypes.byref(owned))
+                if not ownership_ok or not owned.value:
+                    if not ownership_ok:
+                        member["errors"].append(
+                            {"api": "IsProcessInJob", "winerror": ctypes.get_last_error()}
+                        )
+                    member["still_listed_in_job"] = pid in self.member_pids()
+                    member["observation"] = "ownership no longer verified; no image/times inspected"
+                    require(not member["still_listed_in_job"],
+                            f"cannot verify ownership of current job PID {pid}")
+                    continue
+                member["owned_job_verified"] = True
+
+                # One verified handle binds all metadata to this process identity.
+                creation, exit_time, kernel_time, user_time = (
+                    wintypes.FILETIME() for _ in range(4)
+                )
+                if self.kernel.GetProcessTimes(
+                    handle, ctypes.byref(creation), ctypes.byref(exit_time),
+                    ctypes.byref(kernel_time), ctypes.byref(user_time)
+                ):
+                    created = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+                    exited = (exit_time.dwHighDateTime << 32) | exit_time.dwLowDateTime
+                    member.update(creation_filetime_100ns=created, exit_filetime_100ns=exited)
+                    previous = self.identities.get(pid)
+                    if previous is not None and previous != created:
+                        member.update(previous_creation_filetime_100ns=previous,
+                                      observation="new owned process identity at reused PID")
+                    self.identities[pid] = created
+                else:
+                    member["errors"].append(
+                        {"api": "GetProcessTimes", "winerror": ctypes.get_last_error()}
+                    )
+                image = ctypes.create_unicode_buffer(32768)
+                image_size = wintypes.DWORD(len(image))
+                if self.kernel.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(image_size)):
+                    member["image_path"] = image.value
+                else:
+                    member["errors"].append(
+                        {"api": "QueryFullProcessImageNameW", "winerror": ctypes.get_last_error()}
+                    )
                 counters = MemoryCounters()
                 counters.size = ctypes.sizeof(counters)
                 if self.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.size):
                     rss += counters.ws
+                    member["rss_bytes"] = counters.ws
                 else:
-                    exit_code = wintypes.DWORD()
-                    require(self.kernel.GetExitCodeProcess(handle, ctypes.byref(exit_code))
-                            and exit_code.value != 259,
-                            f"cannot read live owned PID {pid} RSS")
+                    member["errors"].append(
+                        {"api": "GetProcessMemoryInfo", "winerror": ctypes.get_last_error()}
+                    )
+                exit_code = wintypes.DWORD()
+                if self.kernel.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    member["observed_exit_code"] = exit_code.value
+                    member["exit_state"] = (
+                        "STILL_ACTIVE" if exit_code.value == 259 else "exit_code_reported"
+                    )
+                else:
+                    member["errors"].append(
+                        {"api": "GetExitCodeProcess", "winerror": ctypes.get_last_error()}
+                    )
+                exited = (member.get("exit_filetime_100ns", 0) != 0
+                          or member.get("observed_exit_code", 259) != 259)
+                if member["errors"] and exited:
+                    member["observation"] = "exited by inspection end; metadata may be incomplete"
+                require(not member["errors"] or exited,
+                        f"live/unknown owned PID {pid} inspection failed: {member['errors']}")
             finally:
                 self.kernel.CloseHandle(handle)
         limits = self.limit_type()
         require(self.kernel.QueryInformationJobObject(
             self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits), None
         ), "cannot read peak job memory")
-        return pids, rss, limits.peak_job_memory
+        self.last_census.update(status="complete", rss_bytes=rss,
+                                peak_job_commit_bytes=limits.peak_job_memory)
+        return pids, rss, limits.peak_job_memory, members
 
     def kill(self):
         require(self.kernel.TerminateJobObject(self.handle, 125),
@@ -399,30 +487,54 @@ class Runner:
                 while True:
                     code = process.poll()
                     if job:
-                        pids, rss, peak_commit = job.census()
+                        pids, rss, peak_commit, members = job.census()
                         escaped = []
                     else:
                         pids, rss, escaped = self.mac_census(process.pid)
                         peak_commit = None
                     capacity = self.capacity()
-                    audit["samples"].append(dict(
+                    sample = dict(
                         capacity, pids=pids, rss_bytes=rss,
                         peak_job_commit_bytes=peak_commit, escaped_pids=escaped,
-                    ))
+                    )
+                    if job:
+                        sample["windows_members"] = members
+                    audit["samples"].append(sample)
                     require(not escaped, "owned descendants escaped their process group")
                     require(rss <= self.budget, "owned tree RSS exceeded budget")
                     if code is None:
                         code = process.poll()
-                        if code is not None:
+                        if code is not None and not job:
                             # Do not reject a stale snapshot of the leader that
                             # exited while the OS/capacity probes were running.
-                            if job:
-                                pids = job.census()[0]
-                            else:
-                                pids = self.mac_census(process.pid)[0]
+                            pids = self.mac_census(process.pid)[0]
                     if code is not None:
                         audit["returncode"] = code
                         audit["signaled"] = code < 0 or (sys.platform == "win32" and code >= 0x80000000)
+                        if job:
+                            drain_start = time.monotonic()
+                            drain_end = min(end, drain_start + 2)
+                            audit["natural_drain_max_seconds"] = 2
+                            audit["post_exit_samples"] = []
+                            while True:
+                                if code == 0:
+                                    audit["natural_drain_seconds"] = time.monotonic() - drain_start
+                                    require(time.monotonic() < drain_end,
+                                            "owned job natural drain deadline exceeded")
+                                pids, rss, peak_commit, members = job.census()
+                                capacity = self.capacity()  # Windows APIs only, no new process.
+                                audit["post_exit_samples"].append(dict(
+                                    capacity, pids=pids, rss_bytes=rss,
+                                    peak_job_commit_bytes=peak_commit, windows_members=members,
+                                ))
+                                audit["natural_drain_seconds"] = time.monotonic() - drain_start
+                                require(rss <= self.budget, "owned post-exit tree RSS exceeded budget")
+                                if code == 0:
+                                    require(time.monotonic() <= drain_end,
+                                            "owned job natural drain deadline exceeded")
+                                if not pids or code != 0 or time.monotonic() >= drain_end:
+                                    break
+                                time.sleep(min(0.1, max(0, drain_end - time.monotonic())))
                         require(not pids, f"command exited with remaining descendants: {pids}")
                         watchdog.cancel()
                         watchdog.join()
@@ -439,6 +551,9 @@ class Runner:
         except BaseException as error:
             failure = error
             audit.update(status="failed", error=repr(error))
+            if job:
+                # Preserve pre-kill metadata separately from later cleanup censuses.
+                audit["windows_census_at_failure"] = job.last_census
             raise
         finally:
             if watchdog:
@@ -491,6 +606,7 @@ class Runner:
                     raise
             finally:
                 if job:
+                    audit["windows_final_census"] = job.last_census
                     try:
                         job.close()
                         audit["job_closed"] = True
@@ -643,6 +759,7 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     report = {
         "status": "incomplete", "mode": args.mode, "source_sha": args.source_sha.lower(),
+        "requested_platforms": os.environ.get("VALIDATION_REQUESTED_PLATFORMS"),
         "deadline_seconds": 3000, "command_max_seconds": 1200,
         "validation_job_deadline_epoch": os.environ.get("VALIDATION_JOB_DEADLINE_EPOCH"),
         "workflow_sha": os.environ.get("VALIDATION_WORKFLOW_SHA"),
@@ -693,6 +810,11 @@ def main():
         require(parallelism["CMAKE_BUILD_PARALLEL_LEVEL"] == parallelism["CARGO_BUILD_JOBS"],
                 "CMAKE_BUILD_PARALLEL_LEVEL must explicitly equal CARGO_BUILD_JOBS")
         require(sys.platform in ("win32", "darwin"), "only Windows/macOS runners are supported")
+        requested_platforms = report["requested_platforms"]
+        require(requested_platforms in ("all", "windows"),
+                "VALIDATION_REQUESTED_PLATFORMS must explicitly be all or windows")
+        require(requested_platforms != "windows" or sys.platform == "win32",
+                "a windows-only request cannot execute on macOS")
         require(sys.version_info >= (3, 9), "Python 3.9+ required")
         require(re.fullmatch(r"[0-9a-fA-F]{40}", report["workflow_sha"] or ""),
                 "VALIDATION_WORKFLOW_SHA must explicitly record the full workflow revision")
@@ -725,7 +847,8 @@ def main():
             target = Path(tempfile.mkdtemp(prefix="konnect-rename-target-", dir=temp)).resolve()
             marker = {"source_sha": args.source_sha.lower(), "job_identity": identity,
                       "core_evidence": str(out), "host_triple": host_triple,
-                      "job_deadline_epoch": job_deadline_epoch, "build_parallelism": parallelism}
+                      "job_deadline_epoch": job_deadline_epoch, "build_parallelism": parallelism,
+                      "requested_platforms": requested_platforms}
             save(target / ".konnect-rename-owned.json", marker)
         else:
             require(sys.platform == "win32", "UNC checks require Windows")
@@ -743,8 +866,9 @@ def main():
                     and core["host"]["arch"] == report["host"]["arch"]
                     and core["verified_host_triple"] == host_triple
                     and core["validation_job_deadline_epoch"] == job_deadline_epoch
-                    and core["build_parallelism"] == parallelism,
-                    "UNC cache source/job/workflow/host/shared-deadline/parallelism mismatch")
+                    and core["build_parallelism"] == parallelism
+                    and core["requested_platforms"] == requested_platforms,
+                    "UNC cache source/job/workflow/host/shared-deadline/parallelism/platforms mismatch")
             require(json.loads((core_out / "source-after.json").read_text(encoding="utf-8")) == before,
                     "UNC source differs from successful core source")
             target = Path(core["cargo_target_dir"]).resolve(strict=True)
@@ -754,8 +878,9 @@ def main():
             require(marker == {"source_sha": args.source_sha.lower(), "job_identity": identity,
                                "core_evidence": str(core_out), "host_triple": host_triple,
                                "job_deadline_epoch": job_deadline_epoch,
-                               "build_parallelism": parallelism},
-                    "UNC target ownership/host/shared-deadline/parallelism mismatch")
+                               "build_parallelism": parallelism,
+                               "requested_platforms": requested_platforms},
+                    "UNC target ownership/host/shared-deadline/parallelism/platforms mismatch")
             require(bool(os.environ.get("KONNECT_RENAME_UNC_ROOT")), "workflow must provision UNC root")
             report["reused_core_evidence"] = str(core_out)
         runner.env["CARGO_TARGET_DIR"] = str(target)
