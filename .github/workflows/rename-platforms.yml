@@ -85,7 +85,9 @@ jobs:
             try {
               if ($created) {
                 Remove-SmbShare -Name $name -Force -Confirm:$false
-                if (Get-SmbShare -Name $name -ErrorAction SilentlyContinue) { throw "Owned SMB share remains" }
+                $remaining = @(Get-SmbShare -ErrorAction Stop |
+                  Where-Object { $_.Name -ieq $name })
+                if ($remaining.Count) { throw "Owned SMB share remains" }
               }
               Remove-Item -LiteralPath $directory -Recurse -Force
               if (Test-Path -LiteralPath $directory) { throw "Owned share directory remains" }

@@ -1,5 +1,38 @@
 # Project rename safety
 
+## Hosted platform qualification
+
+The rename implementation remains frozen at `9f6afc2`, with production Rust
+and Cargo bytes from `efb72c6`. The user chose to hold integration for native
+platform evidence, then authorized a test-only GitHub Actions workflow,
+publication of a candidate validation branch, and a workflow/policy-only
+default-branch bootstrap. Rename is not authorized for merge by that decision.
+
+`rename-platforms.yml` has explicit Windows x64, Intel macOS and Apple Silicon
+jobs. It checks out a full reviewed source SHA, records that SHA separately
+from the workflow SHA, builds the core, runs the focused native filesystem
+regressions and checks the workspace. Windows adds an explicitly invoked
+localhost UNC test using an owned temporary SMB share. The native KiCad GUI
+helper below remains Linux-only and is not claimed as Windows/macOS evidence.
+
+Each runner checks CPU, memory and disk before setup. The validation helper
+bounds cargo concurrency and process lifetime, monitors resource reserves,
+and records source hashes, tool versions, exact command outcomes and cleanup.
+Missing capacity, unavailable infrastructure, zero-test runs, changed protected
+source, deadlines or uncertain cleanup fail the relevant gate.
+
+Evidence artifacts are retained for seven days, including failed runs. A
+passing result qualifies only its recorded commit, architecture, filesystem
+and executed tests. It does not establish arbitrary network-share behavior,
+native PCB project-token rewriting, schematic/PCB parity or same-session
+editor recovery.
+
+Before activation, the coordinator verified that remote ordinary CI and E2E
+were individually disabled. The existing separately managed Dependabot service
+and its configuration remain unchanged with explicit user approval. No release
+or deployment workflow is added. Source preparation and authorization alone
+do not establish that hosted validation has passed.
+
 Bounded A2 work for `konnect-maintained#svj3` and `#xsz0`, based on
 `96b2126a9acc39a9a042609f6b66cf6c1850c834`. The selected contract is guarded
 writes with reported partial outcomes, not automatic rollback.

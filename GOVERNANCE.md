@@ -83,7 +83,8 @@ run that service independently of repository Actions disablement; it is not a
 release workflow and this validation does not change dependency-update policy.
 
 GitHub requires the dispatch workflow on the default branch. A workflow/policy-only
-bootstrap there is authorized; publishing the cleanup parent or merging rename is
+bootstrap there and publication of the cleanup-derived candidate validation branch
+are authorized. Landing the cleanup parent or rename implementation on `main` is
 not. A green run qualifies only its recorded source, runner and tests. Investigate
 failures before any further dispatch; do not repeat runs until one is green.
 

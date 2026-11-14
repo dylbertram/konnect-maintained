@@ -236,6 +236,9 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     for required in [
         "New-SmbShare",
         "Remove-SmbShare",
+        "Get-SmbShare -ErrorAction Stop",
+        "Where-Object { $_.Name -ieq $name }",
+        "if ($remaining.Count)",
         "finally",
         "--mode unc",
         "unc-share-lifecycle.json",
@@ -244,4 +247,8 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     }
     assert!(unc.get("if").is_none());
     assert!(unc.get("continue-on-error").is_none());
+    assert!(
+        !script.contains("Get-SmbShare -Name $name -ErrorAction SilentlyContinue"),
+        "SMB query errors must not count as verified absence"
+    );
 }
