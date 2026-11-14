@@ -193,6 +193,9 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
             "Validate input and runner capacity before setup"
         );
         assert!(steps[0].get("uses").is_none());
+        let preflight = steps[0]["run"].as_str().unwrap();
+        assert!(preflight.contains("VALIDATION_JOB_DEADLINE_EPOCH"));
+        assert!(preflight.contains("3000"));
         let checkout = steps
             .iter()
             .find(|step| {
@@ -240,6 +243,8 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         "Get-SmbShare -ErrorAction Stop",
         "Where-Object { $_.Name -ieq $name }",
         "if ($remaining.Count)",
+        "$remainingSeconds -lt 180",
+        "VALIDATION_JOB_DEADLINE_EPOCH",
         "finally",
         "--mode unc",
         "--evidence \"$evidence/unc\"",
