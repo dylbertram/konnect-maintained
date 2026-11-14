@@ -42,6 +42,9 @@ jobs:
     name: Rename on Windows x64
     runs-on: windows-2025
     timeout-minutes: 60
+    env:
+      VSCMD_SKIP_SENDTELEMETRY: 1
+      VSTEL_OPT_OUT: 1
     steps:
       - name: Validate input and runner capacity before setup
         shell: pwsh
