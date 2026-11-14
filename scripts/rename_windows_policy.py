@@ -21,6 +21,8 @@ NAME = "OptIn"
 TARGET = {"exists": True, "type": 4, "value": 0}
 ABSENT = {"exists": False, "type": None, "value": None}
 STATE = "policy-state.json"
+OWNERSHIP = "policy-ownership.json"
+REG_CREATED_NEW_KEY = 1
 
 
 def require(condition, message):
@@ -139,7 +141,44 @@ def validate(snapshot, identity):
             not (old["exists"] and missing), "Invalid missing-key snapshot")
 
 
-def restore(reg, snapshot):
+def validate_ownership(journal, snapshot, identity):
+    require(isinstance(journal, dict) and
+            set(journal) == {"identity", "created", "creation_uncertain"} and
+            journal["identity"] == identity and
+            type(journal["creation_uncertain"]) is bool and
+            isinstance(journal["created"], list) and
+            journal["created"] == snapshot["missing"][:len(journal["created"])],
+            "Invalid creation ownership journal")
+
+
+def create_new(reg, key):
+    """Create one leaf through its 64-bit parent; require native proof of creation."""
+    import ctypes
+    from ctypes import wintypes
+
+    create = ctypes.WinDLL("advapi32", use_last_error=True).RegCreateKeyExW
+    create.argtypes = (wintypes.HKEY, wintypes.LPCWSTR, wintypes.DWORD,
+                       wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                       ctypes.POINTER(wintypes.HKEY), ctypes.POINTER(wintypes.DWORD))
+    create.restype = wintypes.LONG
+    parent, _, leaf = key.rpartition("\\")
+    handle, disposition = wintypes.HKEY(), wintypes.DWORD()
+    with reg.OpenKey(reg.HKEY_LOCAL_MACHINE, parent, 0,
+                     reg.KEY_CREATE_SUB_KEY | reg.KEY_WOW64_64KEY) as parent_handle:
+        result = create(int(parent_handle), leaf, 0, None, 0,
+                        reg.KEY_READ | reg.KEY_WOW64_64KEY, None,
+                        ctypes.byref(handle), ctypes.byref(disposition))
+        if result:
+            raise ctypes.WinError(result)
+        reg.CloseKey(handle.value)
+        require(disposition.value == REG_CREATED_NEW_KEY,
+                "Creation opened a foreign key; ownership uncertain")
+
+
+def restore(reg, snapshot, journal):
+    require(not journal["creation_uncertain"], "Creation ownership uncertain; refusing mutations")
+    require(not any(exists(reg, key) for key in snapshot["missing"][len(journal["created"]):]),
+            "Unowned policy ancestor exists; refusing mutations")
     old = snapshot["original"]
     current = value(reg)
     require(current == TARGET or current == old, "Concurrent policy change; refusing overwrite")
@@ -151,7 +190,7 @@ def restore(reg, snapshot):
             else:
                 reg.DeleteValue(handle, NAME)
     require(value(reg) == old, "Original value was not restored")
-    for key in reversed(snapshot["missing"]):
+    for key in reversed(journal["created"]):
         try:
             with reg.OpenKey(reg.HKEY_LOCAL_MACHINE, key, 0,
                              reg.KEY_READ | reg.KEY_WOW64_64KEY) as handle:
@@ -166,12 +205,14 @@ def restore(reg, snapshot):
 
 
 def restore_report(reg, directory, identity, snapshot=None):
-    report = {"identity": identity, "status": "restored"}
+    report = {"identity": identity, "status": "restored", "ownership": OWNERSHIP}
     try:
         if snapshot is None:
             snapshot = load(directory / STATE)
         validate(snapshot, identity)
-        restore(reg, snapshot)
+        journal = load(directory / OWNERSHIP)
+        validate_ownership(journal, snapshot, identity)
+        restore(reg, snapshot, journal)
     except BaseException as error:
         report.update(status="failed", cleanup_uncertain=True, **failure(error))
         save(directory, "policy-restore.json", report)
@@ -201,12 +242,18 @@ def main():
         validate(snapshot, identity)  # Reject non-DWORD values before any registry write.
         save(directory, STATE, snapshot, exclusive=True)
         try:
+            journal = {"identity": identity, "created": [], "creation_uncertain": False}
+            save(directory, OWNERSHIP, journal, exclusive=True)
             require(value(reg) == old, "Policy changed after snapshot")
             for key in missing:
+                # Any failure before the final save leaves durable uncertainty.
+                journal["creation_uncertain"] = True
+                save(directory, OWNERSHIP, journal)
                 require(not exists(reg, key), "Policy ancestor appeared after snapshot")
-                with reg.CreateKeyEx(reg.HKEY_LOCAL_MACHINE, key, 0,
-                                     reg.KEY_WRITE | reg.KEY_WOW64_64KEY):
-                    pass
+                create_new(reg, key)
+                journal["created"].append(key)
+                journal["creation_uncertain"] = False
+                save(directory, OWNERSHIP, journal)
             require(value(reg) == old, "Policy changed during key creation")
             with reg.OpenKey(reg.HKEY_LOCAL_MACHINE, KEY, 0,
                              reg.KEY_SET_VALUE | reg.KEY_WOW64_64KEY) as handle:
@@ -214,7 +261,8 @@ def main():
             require(value(reg) == TARGET, "Policy readback failed")
             save(directory, "policy-apply.json", {"identity": identity, "status": "applied"})
         except BaseException as error:
-            report = {"identity": identity, "status": "failed", **failure(error)}
+            report = {"identity": identity, "status": "failed", "ownership": OWNERSHIP,
+                      **failure(error)}
             try:
                 restore_report(reg, directory, identity, snapshot)
                 report["rollback"] = "restored"
