@@ -169,6 +169,11 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     let input = &triggers["workflow_dispatch"]["inputs"]["source_sha"];
     assert_eq!(input["required"], true);
     assert_eq!(input["type"], "string");
+    let platforms = &triggers["workflow_dispatch"]["inputs"]["platforms"];
+    assert_eq!(platforms["required"], true);
+    assert_eq!(platforms["type"], "choice");
+    assert_eq!(platforms["default"], "all");
+    assert_eq!(platforms["options"], serde_json::json!(["all", "windows"]));
     assert_eq!(config["env"]["CARGO_BUILD_JOBS"], 2);
     assert_eq!(config["env"]["CMAKE_BUILD_PARALLEL_LEVEL"], 2);
     assert_eq!(config["env"]["MSBUILDDISABLENODEREUSE"], 1);
@@ -180,6 +185,10 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         config["env"]["VALIDATION_WORKFLOW_SHA"],
         "${{ github.workflow_sha }}"
     );
+    assert_eq!(
+        config["env"]["VALIDATION_REQUESTED_PLATFORMS"],
+        "${{ inputs.platforms }}"
+    );
     let jobs = config["jobs"].as_object().unwrap();
     assert_eq!(jobs.len(), 3);
     for (id, runner) in [
@@ -190,7 +199,11 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         let job = &jobs[id];
         assert_eq!(job["runs-on"], runner);
         assert_eq!(job["timeout-minutes"], 60);
-        assert!(job.get("if").is_none());
+        if id == "windows" {
+            assert!(job.get("if").is_none());
+        } else {
+            assert_eq!(job["if"], "inputs.platforms == 'all'");
+        }
         assert!(job.get("continue-on-error").is_none());
         let steps = job["steps"].as_array().unwrap();
         assert_eq!(
