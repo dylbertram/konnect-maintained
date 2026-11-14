@@ -71,6 +71,26 @@ lifetime, monitors the 500 MB memory reserve, and retains evidence for seven day
 One shared 50-minute deadline starts before tool setup. Core work reserves five
 minutes for UNC, and UNC cannot create a share without at least three minutes
 remaining. The 60-minute job limit leaves additional cleanup/upload time.
+Apple Silicon uses one build/test worker. Preflight admits a minimum 2 GiB tree
+budget plus the unchanged 500 MB reserve and 256 MiB headroom; capacity is
+measured again after setup. Capacity refusals retain their measurements.
+The platform selector defaults to all three jobs. Explicit Windows-only
+investigation skips both Mac jobs and records that narrower scope; it cannot
+be cited as a new all-platform pass. Per-platform source evidence stays separate.
+Windows requests Visual Studio telemetry opt-out through job-local environment
+variables. The observed `vctip.exe` survivor is not allowlisted or deleted;
+the empty-owned-job condition still decides whether a command passes.
+After the environment-only trial failed, the user separately authorized a
+disposable GitHub runner registry-policy trial. Only the 64-bit-view
+`HKLM\Software\Policies\Microsoft\VisualStudio\SQM\OptIn` DWORD is set to zero.
+Its original state is saved before mutation and restored in an always-run step
+before artifact upload, including removal of only newly created empty keys.
+A small owned native compiler probe must finish with an empty job before any
+full build. Failure stops the gates. No toolchain files are changed. This is
+an optional-telemetry policy request, not a claim that all telemetry is disabled.
+Restoration is attempted after apply success, failure or cancellation. Hard
+runner loss cannot guarantee restoration; missing or unverifiable saved state
+must not be reported as restored.
 
 The first gates build the full core, execute the rename filesystem regressions,
 and check the workspace. Windows additionally uses a temporary localhost SMB

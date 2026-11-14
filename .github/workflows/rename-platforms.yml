@@ -9,12 +9,20 @@ on:
         description: Full reviewed commit SHA to build and test
         required: true
         type: string
+      platforms:
+        description: All platforms for qualification, or Windows-only investigation
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - windows
 
 permissions:
   contents: read
 
 concurrency:
-  group: rename-platforms-${{ inputs.source_sha }}
+  group: rename-platforms-${{ inputs.source_sha }}-${{ inputs.platforms }}
   cancel-in-progress: true
 
 env:
@@ -27,12 +35,16 @@ env:
   CARGO_PROFILE_TEST_DEBUG: 0
   TESTED_SOURCE_SHA: ${{ inputs.source_sha }}
   VALIDATION_WORKFLOW_SHA: ${{ github.workflow_sha }}
+  VALIDATION_REQUESTED_PLATFORMS: ${{ inputs.platforms }}
 
 jobs:
   windows:
     name: Rename on Windows x64
     runs-on: windows-2025
     timeout-minutes: 60
+    env:
+      VSCMD_SKIP_SENDTELEMETRY: 1
+      VSTEL_OPT_OUT: 1
     steps:
       - name: Validate input and runner capacity before setup
         shell: pwsh
@@ -44,8 +56,11 @@ jobs:
           $os = Get-CimInstance Win32_OperatingSystem
           $available = [long]$os.FreePhysicalMemory * 1024
           $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($env:RUNNER_TEMP).Substring(0,1))
-          @{ available_memory = $available; free_disk = $drive.Free; cpu = $env:NUMBER_OF_PROCESSORS } | ConvertTo-Json
-          if ($available -lt 3721225472 -or $drive.Free -lt 6442450944) { throw "Insufficient runner reserves" }
+          $evidence = Join-Path $env:RUNNER_TEMP "rename-evidence"
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          $capacity = @{ available_memory = $available; free_disk = $drive.Free; cpu = $env:NUMBER_OF_PROCESSORS; minimum_tree_budget = 2147483648; reserve = 500000000; headroom = 268435456 }
+          $capacity | ConvertTo-Json | Tee-Object -FilePath (Join-Path $evidence "preflight-capacity.json")
+          if ($available -lt 2915919104 -or $drive.Free -lt 6442450944) { throw "Insufficient runner reserves" }
           # Protected byte hashes must not be changed by Windows checkout EOL conversion.
           git config --global core.autocrlf false
           if ($LASTEXITCODE -ne 0) { throw "Cannot disable checkout EOL conversion" }
@@ -66,6 +81,13 @@ jobs:
         with:
           tool: protoc@3.23.4
           fallback: none
+      - name: Apply disposable runner telemetry policy
+        id: windows_policy
+        shell: pwsh
+        run: |
+          python scripts/rename_windows_policy.py --action apply --evidence "$env:RUNNER_TEMP/rename-evidence/policy"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VALIDATION_WINDOWS_POLICY_EVIDENCE=$env:RUNNER_TEMP/rename-evidence/policy/policy-apply.json" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build core and run native filesystem tests
         shell: pwsh
         run: |
@@ -110,6 +132,12 @@ jobs:
               Remove-Item Env:KONNECT_RENAME_UNC_ROOT -ErrorAction SilentlyContinue
             }
           }
+      - name: Restore disposable runner telemetry policy
+        if: always() && (steps.windows_policy.outcome == 'success' || steps.windows_policy.outcome == 'failure' || steps.windows_policy.outcome == 'cancelled')
+        shell: pwsh
+        run: |
+          python scripts/rename_windows_policy.py --action restore --evidence "$env:RUNNER_TEMP/rename-evidence/policy"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain Windows evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -121,6 +149,7 @@ jobs:
 
   macos-intel:
     name: Rename on macOS Intel
+    if: inputs.platforms == 'all'
     runs-on: macos-15-intel
     timeout-minutes: 60
     steps:
@@ -138,8 +167,14 @@ jobs:
           counts = {key: int(value) for key, value in re.findall(r"^([^:\n]+):\s+(\d+)", text, re.M)}
           available = page * sum(counts[key] for key in ["Pages free", "Pages inactive", "Pages speculative"])
           disk = shutil.disk_usage(os.environ["RUNNER_TEMP"]).free
-          print(json.dumps({"available_memory": available, "free_disk": disk, "cpu": os.cpu_count()}))
-          assert available >= 3721225472 and disk >= 6442450944, "Insufficient runner reserves"
+          evidence = os.path.join(os.environ["RUNNER_TEMP"], "rename-evidence")
+          os.makedirs(evidence, exist_ok=False)
+          capacity = {"available_memory": available, "free_disk": disk, "cpu": os.cpu_count(),
+                      "minimum_tree_budget": 2147483648, "reserve": 500000000, "headroom": 268435456}
+          with open(os.path.join(evidence, "preflight-capacity.json"), "w", encoding="utf-8") as output:
+              json.dump(capacity, output, indent=2)
+          print(json.dumps(capacity))
+          assert available >= 2915919104 and disk >= 6442450944, "Insufficient runner reserves"
           PY
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -170,8 +205,13 @@ jobs:
 
   macos-arm:
     name: Rename on macOS Apple Silicon
+    if: inputs.platforms == 'all'
     runs-on: macos-15
     timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 1
+      CMAKE_BUILD_PARALLEL_LEVEL: 1
+      RUST_TEST_THREADS: 1
     steps:
       - name: Validate input and runner capacity before setup
         shell: bash
@@ -187,8 +227,14 @@ jobs:
           counts = {key: int(value) for key, value in re.findall(r"^([^:\n]+):\s+(\d+)", text, re.M)}
           available = page * sum(counts[key] for key in ["Pages free", "Pages inactive", "Pages speculative"])
           disk = shutil.disk_usage(os.environ["RUNNER_TEMP"]).free
-          print(json.dumps({"available_memory": available, "free_disk": disk, "cpu": os.cpu_count()}))
-          assert available >= 3721225472 and disk >= 6442450944, "Insufficient runner reserves"
+          evidence = os.path.join(os.environ["RUNNER_TEMP"], "rename-evidence")
+          os.makedirs(evidence, exist_ok=False)
+          capacity = {"available_memory": available, "free_disk": disk, "cpu": os.cpu_count(),
+                      "minimum_tree_budget": 2147483648, "reserve": 500000000, "headroom": 268435456}
+          with open(os.path.join(evidence, "preflight-capacity.json"), "w", encoding="utf-8") as output:
+              json.dump(capacity, output, indent=2)
+          print(json.dumps(capacity))
+          assert available >= 2915919104 and disk >= 6442450944, "Insufficient runner reserves"
           PY
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

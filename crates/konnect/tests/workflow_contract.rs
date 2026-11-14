@@ -169,13 +169,25 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     let input = &triggers["workflow_dispatch"]["inputs"]["source_sha"];
     assert_eq!(input["required"], true);
     assert_eq!(input["type"], "string");
+    let platforms = &triggers["workflow_dispatch"]["inputs"]["platforms"];
+    assert_eq!(platforms["required"], true);
+    assert_eq!(platforms["type"], "choice");
+    assert_eq!(platforms["default"], "all");
+    assert_eq!(platforms["options"], serde_json::json!(["all", "windows"]));
     assert_eq!(config["env"]["CARGO_BUILD_JOBS"], 2);
     assert_eq!(config["env"]["CMAKE_BUILD_PARALLEL_LEVEL"], 2);
     assert_eq!(config["env"]["MSBUILDDISABLENODEREUSE"], 1);
-    assert_eq!(config["env"]["TESTED_SOURCE_SHA"], "${{ inputs.source_sha }}");
+    assert_eq!(
+        config["env"]["TESTED_SOURCE_SHA"],
+        "${{ inputs.source_sha }}"
+    );
     assert_eq!(
         config["env"]["VALIDATION_WORKFLOW_SHA"],
         "${{ github.workflow_sha }}"
+    );
+    assert_eq!(
+        config["env"]["VALIDATION_REQUESTED_PLATFORMS"],
+        "${{ inputs.platforms }}"
     );
     let jobs = config["jobs"].as_object().unwrap();
     assert_eq!(jobs.len(), 3);
@@ -187,7 +199,11 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         let job = &jobs[id];
         assert_eq!(job["runs-on"], runner);
         assert_eq!(job["timeout-minutes"], 60);
-        assert!(job.get("if").is_none());
+        if id == "windows" {
+            assert!(job.get("if").is_none());
+        } else {
+            assert_eq!(job["if"], "inputs.platforms == 'all'");
+        }
         assert!(job.get("continue-on-error").is_none());
         let steps = job["steps"].as_array().unwrap();
         assert_eq!(
@@ -198,6 +214,8 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         let preflight = steps[0]["run"].as_str().unwrap();
         assert!(preflight.contains("VALIDATION_JOB_DEADLINE_EPOCH"));
         assert!(preflight.contains("3000"));
+        assert!(preflight.contains("2915919104"));
+        assert!(preflight.contains("preflight-capacity.json"));
         let checkout = steps
             .iter()
             .find(|step| {
@@ -238,6 +256,15 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         .iter()
         .find(|step| step["name"] == "Test an owned loopback UNC share")
         .unwrap();
+    for key in [
+        "CARGO_BUILD_JOBS",
+        "CMAKE_BUILD_PARALLEL_LEVEL",
+        "RUST_TEST_THREADS",
+    ] {
+        assert_eq!(jobs["macos-arm"]["env"][key], 1);
+    }
+    assert_eq!(jobs["windows"]["env"]["VSCMD_SKIP_SENDTELEMETRY"], 1);
+    assert_eq!(jobs["windows"]["env"]["VSTEL_OPT_OUT"], 1);
     let script = unc["run"].as_str().unwrap();
     for required in [
         "New-SmbShare",
@@ -252,7 +279,10 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         "--evidence \"$evidence/unc\"",
         "unc-share-lifecycle.json",
     ] {
-        assert!(script.contains(required), "missing UNC boundary: {required}");
+        assert!(
+            script.contains(required),
+            "missing UNC boundary: {required}"
+        );
     }
     assert!(unc.get("if").is_none());
     assert!(unc.get("continue-on-error").is_none());
@@ -263,4 +293,39 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     let preflight = jobs["windows"]["steps"][0]["run"].as_str().unwrap();
     assert!(preflight.contains("git config --global core.autocrlf false"));
     assert!(preflight.contains("git config --global core.eol lf"));
+}
+
+#[test]
+fn windows_registry_trial_is_restored_before_evidence_upload() {
+    let config = workflow("rename-platforms.yml");
+    let steps = config["jobs"]["windows"]["steps"].as_array().unwrap();
+    let position = |name: &str| steps.iter().position(|step| step["name"] == name).unwrap();
+    let apply = position("Apply disposable runner telemetry policy");
+    let core = position("Build core and run native filesystem tests");
+    let unc = position("Test an owned loopback UNC share");
+    let restore = position("Restore disposable runner telemetry policy");
+    let upload = position("Retain Windows evidence");
+    assert!(apply < core && core < unc && unc < restore && restore < upload);
+    assert_eq!(steps[apply]["id"], "windows_policy");
+    assert!(steps[apply]["run"]
+        .as_str()
+        .unwrap()
+        .contains("VALIDATION_WINDOWS_POLICY_EVIDENCE="));
+    assert!(steps[apply]["run"]
+        .as_str()
+        .unwrap()
+        .contains("$env:GITHUB_ENV"));
+    assert!(steps[apply].get("if").is_none());
+    assert_eq!(
+        steps[restore]["if"],
+        "always() && (steps.windows_policy.outcome == 'success' || steps.windows_policy.outcome == 'failure' || steps.windows_policy.outcome == 'cancelled')"
+    );
+    for (index, action) in [(apply, "apply"), (restore, "restore")] {
+        let script = steps[index]["run"].as_str().unwrap();
+        assert!(script.contains("scripts/rename_windows_policy.py"));
+        assert!(script.contains(&format!("--action {action}")));
+        assert!(script.contains("rename-evidence/policy"));
+        assert!(script.contains("exit $LASTEXITCODE"));
+        assert!(steps[index].get("continue-on-error").is_none());
+    }
 }
