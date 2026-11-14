@@ -77,6 +77,9 @@ measured again after setup. Capacity refusals retain their measurements.
 The platform selector defaults to all three jobs. Explicit Windows-only
 investigation skips both Mac jobs and records that narrower scope; it cannot
 be cited as a new all-platform pass. Per-platform source evidence stays separate.
+Windows requests Visual Studio telemetry opt-out through job-local environment
+variables. The observed `vctip.exe` survivor is not allowlisted or deleted;
+the empty-owned-job condition still decides whether a command passes.
 
 The first gates build the full core, execute the rename filesystem regressions,
 and check the workspace. Windows additionally uses a temporary localhost SMB

@@ -263,6 +263,8 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     ] {
         assert_eq!(jobs["macos-arm"]["env"][key], 1);
     }
+    assert_eq!(jobs["windows"]["env"]["VSCMD_SKIP_SENDTELEMETRY"], 1);
+    assert_eq!(jobs["windows"]["env"]["VSTEL_OPT_OUT"], 1);
     let script = unc["run"].as_str().unwrap();
     for required in [
         "New-SmbShare",
