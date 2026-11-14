@@ -1,0 +1,199 @@
+name: Rename platform validation
+
+# Manual evidence collection only. No PR/tag/schedule triggers or publication.
+# The default-branch workflow checks out the exact reviewed candidate SHA.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full reviewed commit SHA to build and test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rename-platforms-${{ inputs.source_sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: 2
+  RUST_TEST_THREADS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  TESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+  VALIDATION_WORKFLOW_SHA: ${{ github.workflow_sha }}
+
+jobs:
+  windows:
+    name: Rename on Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Validate input and runner capacity before setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:TESTED_SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw "Full lowercase source SHA required" }
+          $os = Get-CimInstance Win32_OperatingSystem
+          $available = [long]$os.FreePhysicalMemory * 1024
+          $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($env:RUNNER_TEMP).Substring(0,1))
+          @{ available_memory = $available; free_disk = $drive.Free; cpu = $env:NUMBER_OF_PROCESSORS } | ConvertTo-Json
+          if ($available -lt 3721225472 -or $drive.Free -lt 6442450944) { throw "Insufficient runner reserves" }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: protoc@3.23.4
+          fallback: none
+      - name: Build core and run native filesystem tests
+        shell: pwsh
+        run: |
+          python scripts/rename_platform_checks.py --source-sha $env:TESTED_SOURCE_SHA --evidence "$env:RUNNER_TEMP/rename-evidence" --mode core
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test an owned loopback UNC share
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "KonnectRename$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $directory = Join-Path $env:RUNNER_TEMP ("rename-share-" + [guid]::NewGuid().ToString("N"))
+          $evidence = Join-Path $env:RUNNER_TEMP "rename-evidence"
+          $created = $false
+          $audit = @{ share = $name; directory = $directory; created = $false; removed = $false }
+          New-Item -ItemType Directory -Path $directory | Out-Null
+          try {
+            if ((Get-Service LanmanServer).Status -ne "Running") { throw "SMB server unavailable; no service will be started" }
+            $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            New-SmbShare -Name $name -Path $directory -FullAccess $account | Out-Null
+            $created = $true
+            $audit.created = $true
+            $env:KONNECT_RENAME_UNC_ROOT = "\\localhost\$name"
+            python scripts/rename_platform_checks.py --source-sha $env:TESTED_SOURCE_SHA --evidence $evidence --mode unc
+            if ($LASTEXITCODE -ne 0) { throw "Native UNC gate failed with exit $LASTEXITCODE" }
+          } finally {
+            try {
+              if ($created) {
+                Remove-SmbShare -Name $name -Force -Confirm:$false
+                if (Get-SmbShare -Name $name -ErrorAction SilentlyContinue) { throw "Owned SMB share remains" }
+              }
+              Remove-Item -LiteralPath $directory -Recurse -Force
+              if (Test-Path -LiteralPath $directory) { throw "Owned share directory remains" }
+              $audit.removed = $true
+            } finally {
+              $audit | ConvertTo-Json | Set-Content (Join-Path $evidence "unc-share-lifecycle.json")
+              Remove-Item Env:KONNECT_RENAME_UNC_ROOT -ErrorAction SilentlyContinue
+            }
+          }
+      - name: Retain Windows evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rename-windows-x64-${{ inputs.source_sha }}
+          retention-days: 7
+          path: ${{ runner.temp }}/rename-evidence/
+          if-no-files-found: error
+
+  macos-intel:
+    name: Rename on macOS Intel
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - name: Validate input and runner capacity before setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TESTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          python3 - <<'PY'
+          import json, os, re, shutil, subprocess
+          text = subprocess.check_output(["vm_stat"], text=True)
+          page = int(re.search(r"page size of (\d+) bytes", text)[1])
+          counts = {key: int(value) for key, value in re.findall(r"^([^:\n]+):\s+(\d+)", text, re.M)}
+          available = page * sum(counts[key] for key in ["Pages free", "Pages inactive", "Pages speculative"])
+          disk = shutil.disk_usage(os.environ["RUNNER_TEMP"]).free
+          print(json.dumps({"available_memory": available, "free_disk": disk, "cpu": os.cpu_count()}))
+          assert available >= 3721225472 and disk >= 6442450944, "Insufficient runner reserves"
+          PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: protoc@3.23.4
+          fallback: none
+      - name: Build core and run native filesystem tests
+        shell: bash
+        run: python scripts/rename_platform_checks.py --source-sha "$TESTED_SOURCE_SHA" --evidence "$RUNNER_TEMP/rename-evidence" --mode core
+      - name: Retain Intel macOS evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rename-macos-intel-${{ inputs.source_sha }}
+          retention-days: 7
+          path: ${{ runner.temp }}/rename-evidence/
+          if-no-files-found: error
+
+  macos-arm:
+    name: Rename on macOS Apple Silicon
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Validate input and runner capacity before setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TESTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          python3 - <<'PY'
+          import json, os, re, shutil, subprocess
+          text = subprocess.check_output(["vm_stat"], text=True)
+          page = int(re.search(r"page size of (\d+) bytes", text)[1])
+          counts = {key: int(value) for key, value in re.findall(r"^([^:\n]+):\s+(\d+)", text, re.M)}
+          available = page * sum(counts[key] for key in ["Pages free", "Pages inactive", "Pages speculative"])
+          disk = shutil.disk_usage(os.environ["RUNNER_TEMP"]).free
+          print(json.dumps({"available_memory": available, "free_disk": disk, "cpu": os.cpu_count()}))
+          assert available >= 3721225472 and disk >= 6442450944, "Insufficient runner reserves"
+          PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: protoc@3.23.4
+          fallback: none
+      - name: Build core and run native filesystem tests
+        shell: bash
+        run: python scripts/rename_platform_checks.py --source-sha "$TESTED_SOURCE_SHA" --evidence "$RUNNER_TEMP/rename-evidence" --mode core
+      - name: Retain Apple Silicon evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rename-macos-arm-${{ inputs.source_sha }}
+          retention-days: 7
+          path: ${{ runner.temp }}/rename-evidence/
+          if-no-files-found: error
