@@ -196,7 +196,6 @@ class Runner:
         self.env = os.environ.copy()
         self.env.update({
             "RUSTUP_TOOLCHAIN": "1.96.0",
-            "CARGO_BUILD_JOBS": "2", "RUST_TEST_THREADS": "2",
             "CARGO_PROFILE_DEV_DEBUG": "0", "CARGO_PROFILE_TEST_DEBUG": "0",
             "CARGO_INCREMENTAL": "0", "CARGO_TERM_COLOR": "never",
             "RUST_BACKTRACE": "1", "PYTHONDONTWRITEBYTECODE": "1",
@@ -684,6 +683,15 @@ def main():
         )
         require(DEADLINE - time.monotonic() > 60,
                 "insufficient shared job time for execution plus final source audit; not extended")
+        parallelism = {key: runner.env.get(key) for key in (
+            "CARGO_BUILD_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL", "RUST_TEST_THREADS"
+        )}
+        report["build_parallelism"] = parallelism
+        for key in ("CARGO_BUILD_JOBS", "RUST_TEST_THREADS"):
+            require(parallelism[key] in ("1", "2"),
+                    f"{key} must explicitly be the integer 1 or 2")
+        require(parallelism["CMAKE_BUILD_PARALLEL_LEVEL"] == parallelism["CARGO_BUILD_JOBS"],
+                "CMAKE_BUILD_PARALLEL_LEVEL must explicitly equal CARGO_BUILD_JOBS")
         require(sys.platform in ("win32", "darwin"), "only Windows/macOS runners are supported")
         require(sys.version_info >= (3, 9), "Python 3.9+ required")
         require(re.fullmatch(r"[0-9a-fA-F]{40}", report["workflow_sha"] or ""),
@@ -717,7 +725,7 @@ def main():
             target = Path(tempfile.mkdtemp(prefix="konnect-rename-target-", dir=temp)).resolve()
             marker = {"source_sha": args.source_sha.lower(), "job_identity": identity,
                       "core_evidence": str(out), "host_triple": host_triple,
-                      "job_deadline_epoch": job_deadline_epoch}
+                      "job_deadline_epoch": job_deadline_epoch, "build_parallelism": parallelism}
             save(target / ".konnect-rename-owned.json", marker)
         else:
             require(sys.platform == "win32", "UNC checks require Windows")
@@ -734,8 +742,9 @@ def main():
                     and core["host"]["os"] == report["host"]["os"]
                     and core["host"]["arch"] == report["host"]["arch"]
                     and core["verified_host_triple"] == host_triple
-                    and core["validation_job_deadline_epoch"] == job_deadline_epoch,
-                    "UNC cache source/job/workflow/host/shared-deadline mismatch")
+                    and core["validation_job_deadline_epoch"] == job_deadline_epoch
+                    and core["build_parallelism"] == parallelism,
+                    "UNC cache source/job/workflow/host/shared-deadline/parallelism mismatch")
             require(json.loads((core_out / "source-after.json").read_text(encoding="utf-8")) == before,
                     "UNC source differs from successful core source")
             target = Path(core["cargo_target_dir"]).resolve(strict=True)
@@ -744,8 +753,9 @@ def main():
             marker = json.loads((target / ".konnect-rename-owned.json").read_text(encoding="utf-8"))
             require(marker == {"source_sha": args.source_sha.lower(), "job_identity": identity,
                                "core_evidence": str(core_out), "host_triple": host_triple,
-                               "job_deadline_epoch": job_deadline_epoch},
-                    "UNC target ownership/host/shared-deadline mismatch")
+                               "job_deadline_epoch": job_deadline_epoch,
+                               "build_parallelism": parallelism},
+                    "UNC target ownership/host/shared-deadline/parallelism mismatch")
             require(bool(os.environ.get("KONNECT_RENAME_UNC_ROOT")), "workflow must provision UNC root")
             report["reused_core_evidence"] = str(core_out)
         runner.env["CARGO_TARGET_DIR"] = str(target)
@@ -756,7 +766,7 @@ def main():
         runner.capacity(initial=True)
         report["cargo_target_dir"] = str(target)
         report["build_environment"] = {key: runner.env[key] for key in (
-            "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "RUST_TEST_THREADS",
+            "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL", "RUST_TEST_THREADS",
             "CARGO_PROFILE_DEV_DEBUG", "CARGO_PROFILE_TEST_DEBUG", "CARGO_INCREMENTAL",
             "RUSTUP_TOOLCHAIN"
         )}
@@ -785,7 +795,7 @@ def main():
             log = runner.run("workspace-tests", [
                 "cargo", "test", "--workspace", "--locked", "--lib", "--tests",
                 "--target", host_triple,
-                "--", "--test-threads=2",
+                "--", f"--test-threads={parallelism['RUST_TEST_THREADS']}",
             ])
             report["tests"]["workspace"] = test_counts(log)
             remaining = DEADLINE - time.monotonic()
