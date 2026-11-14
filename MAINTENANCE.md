@@ -32,8 +32,10 @@ comments, and review state do not migrate with Git branches.
 
 ## Stabilization and release gates
 
-GitHub Actions remain disabled. The maintained CI is read-only, E2E is manual,
-and inherited release and scheduled issue-closing workflows have been removed.
+Ordinary CI and KiCad E2E remain individually disabled. A separate, explicitly
+authorized manual rename-platform workflow can collect Windows/macOS build and
+native filesystem evidence without merging rename. See [governance](GOVERNANCE.md).
+Inherited release and scheduled issue-closing workflows have been removed.
 Hosted checks and branch protection still need deliberate activation and
 verification. Pushing imported tags must not publish replacement releases.
 
