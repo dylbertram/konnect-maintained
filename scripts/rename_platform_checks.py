@@ -803,6 +803,7 @@ def windows_policy_proof(runner):
             and ownership_path.name == "policy-ownership.json" and ownership_path.is_file(),
             "policy-ownership.json must be in the same evidence directory")
     ownership, ownership_sha = bounded_json(ownership_path)
+    rename_windows_policy.validate_ownership(ownership, snapshot, identity)
     require(ownership.get("identity") == snapshot["identity"]
             and ownership.get("creation_uncertain") is False
             and isinstance(ownership.get("created"), list)
