@@ -80,6 +80,14 @@ be cited as a new all-platform pass. Per-platform source evidence stays separate
 Windows requests Visual Studio telemetry opt-out through job-local environment
 variables. The observed `vctip.exe` survivor is not allowlisted or deleted;
 the empty-owned-job condition still decides whether a command passes.
+After the environment-only trial failed, the user separately authorized a
+disposable GitHub runner registry-policy trial. Only the 64-bit-view
+`HKLM\Software\Policies\Microsoft\VisualStudio\SQM\OptIn` DWORD is set to zero.
+Its original state is saved before mutation and restored in an always-run step
+before artifact upload, including removal of only newly created empty keys.
+A small owned native compiler probe must finish with an empty job before any
+full build. Failure stops the gates. No toolchain files are changed. This is
+an optional-telemetry policy request, not a claim that all telemetry is disabled.
 
 The first gates build the full core, execute the rename filesystem regressions,
 and check the workspace. Windows additionally uses a temporary localhost SMB
