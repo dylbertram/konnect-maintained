@@ -310,7 +310,7 @@ fn windows_registry_trial_is_restored_before_evidence_upload() {
     assert!(steps[apply].get("if").is_none());
     assert_eq!(
         steps[restore]["if"],
-        "always() && (steps.windows_policy.outcome == 'success' || steps.windows_policy.outcome == 'failure')"
+        "always() && (steps.windows_policy.outcome == 'success' || steps.windows_policy.outcome == 'failure' || steps.windows_policy.outcome == 'cancelled')"
     );
     for (index, action) in [(apply, "apply"), (restore, "restore")] {
         let script = steps[index]["run"].as_str().unwrap();

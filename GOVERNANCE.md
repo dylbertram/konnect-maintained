@@ -88,6 +88,9 @@ before artifact upload, including removal of only newly created empty keys.
 A small owned native compiler probe must finish with an empty job before any
 full build. Failure stops the gates. No toolchain files are changed. This is
 an optional-telemetry policy request, not a claim that all telemetry is disabled.
+Restoration is attempted after apply success, failure or cancellation. Hard
+runner loss cannot guarantee restoration; missing or unverifiable saved state
+must not be reported as restored.
 
 The first gates build the full core, execute the rename filesystem regressions,
 and check the workspace. Windows additionally uses a temporary localhost SMB

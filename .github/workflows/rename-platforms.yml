@@ -132,7 +132,7 @@ jobs:
             }
           }
       - name: Restore disposable runner telemetry policy
-        if: always() && (steps.windows_policy.outcome == 'success' || steps.windows_policy.outcome == 'failure')
+        if: always() && (steps.windows_policy.outcome == 'success' || steps.windows_policy.outcome == 'failure' || steps.windows_policy.outcome == 'cancelled')
         shell: pwsh
         run: |
           python scripts/rename_windows_policy.py --action restore --evidence "$env:RUNNER_TEMP/rename-evidence/policy"
