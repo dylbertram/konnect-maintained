@@ -74,6 +74,9 @@ remaining. The 60-minute job limit leaves additional cleanup/upload time.
 Apple Silicon uses one build/test worker. Preflight admits a minimum 2 GiB tree
 budget plus the unchanged 500 MB reserve and 256 MiB headroom; capacity is
 measured again after setup. Capacity refusals retain their measurements.
+The platform selector defaults to all three jobs. Explicit Windows-only
+investigation skips both Mac jobs and records that narrower scope; it cannot
+be cited as a new all-platform pass. Per-platform source evidence stays separate.
 
 The first gates build the full core, execute the rename filesystem regressions,
 and check the workspace. Windows additionally uses a temporary localhost SMB
