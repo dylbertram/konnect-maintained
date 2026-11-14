@@ -195,6 +195,7 @@ class Runner:
         self.disks = [ROOT, evidence]
         self.env = os.environ.copy()
         self.env.update({
+            "RUSTUP_TOOLCHAIN": "1.96.0",
             "CARGO_BUILD_JOBS": "2", "RUST_TEST_THREADS": "2",
             "CARGO_PROFILE_DEV_DEBUG": "0", "CARGO_PROFILE_TEST_DEBUG": "0",
             "CARGO_INCREMENTAL": "0", "CARGO_TERM_COLOR": "never",
@@ -568,6 +569,38 @@ def job_identity():
     return result
 
 
+def verify_native_toolchain(report):
+    versions = report["tool_versions"]
+    for name in ("rustc", "cargo"):
+        require(re.fullmatch(rf"{name} 1\.96\.0(?: \([^\r\n]+\))?", versions[name]),
+                f"require exact {name} release 1.96.0, observed: {versions[name]}")
+    require(versions["protoc"] == "libprotoc 23.4",
+            f"require exact libprotoc 23.4, observed: {versions['protoc']}")
+    host = report["host"]
+    machine = host["arch"].lower()
+    if sys.platform == "win32":
+        require(host["runner_os"] == "Windows" and host["runner_arch"] == "X64"
+                and machine in ("amd64", "x86_64"), "require native Windows x64 runner")
+        expected = "x86_64-pc-windows-msvc"
+    else:
+        require(host["runner_os"] == "macOS", "require native macOS runner")
+        if host["runner_arch"] == "X64":
+            require(machine == "x86_64", "macOS X64 runner/machine architecture mismatch")
+            expected = "x86_64-apple-darwin"
+        else:
+            require(host["runner_arch"] == "ARM64" and machine in ("arm64", "aarch64"),
+                    "macOS ARM64 runner/machine architecture mismatch")
+            expected = "aarch64-apple-darwin"
+    verbose = report["rustc_verbose"]
+    require(re.findall(r"^release: (\S+)$", verbose, re.MULTILINE) == ["1.96.0"],
+            "rustc -vV release must be exactly 1.96.0")
+    require(re.findall(r"^host: (\S+)$", verbose, re.MULTILINE) == [expected],
+            f"rustc host must match this native runner: {expected}")
+    report["verified_host_triple"] = expected
+    report["native_host_verified"] = True
+    return expected
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-sha", required=True)
@@ -582,7 +615,8 @@ def main():
     report = {
         "status": "incomplete", "mode": args.mode, "source_sha": args.source_sha.lower(),
         "deadline_seconds": 3000, "command_max_seconds": 1200,
-        "workflow_sha": os.environ.get("GITHUB_WORKFLOW_SHA"),
+        "workflow_sha": os.environ.get("VALIDATION_WORKFLOW_SHA"),
+        "github_workflow_sha": os.environ.get("GITHUB_WORKFLOW_SHA"),
         "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"),
         "github_sha": os.environ.get("GITHUB_SHA"),
         "host": {"platform": platform.platform(), "os": platform.system(),
@@ -599,7 +633,12 @@ def main():
         require(sys.platform in ("win32", "darwin"), "only Windows/macOS runners are supported")
         require(sys.version_info >= (3, 9), "Python 3.9+ required")
         require(re.fullmatch(r"[0-9a-fA-F]{40}", report["workflow_sha"] or ""),
-                "GITHUB_WORKFLOW_SHA must record the full workflow revision")
+                "VALIDATION_WORKFLOW_SHA must explicitly record the full workflow revision")
+        report["workflow_sha"] = report["workflow_sha"].lower()
+        if report["github_workflow_sha"] is not None:
+            require(re.fullmatch(r"[0-9a-fA-F]{40}", report["github_workflow_sha"])
+                    and report["github_workflow_sha"].lower() == report["workflow_sha"],
+                    "GITHUB_WORKFLOW_SHA must match explicit VALIDATION_WORKFLOW_SHA when provided")
         identity = job_identity()
         report["job_identity"] = identity
         if sys.platform == "darwin":
@@ -619,10 +658,11 @@ def main():
             for name in ("rustc", "cargo", "protoc")
         }
         report["rustc_verbose"] = runner.text("rustc-verbose", ["rustc", "-vV"])
+        host_triple = verify_native_toolchain(report)
         if args.mode == "core":
             target = Path(tempfile.mkdtemp(prefix="konnect-rename-target-", dir=temp)).resolve()
             marker = {"source_sha": args.source_sha.lower(), "job_identity": identity,
-                      "core_evidence": str(out)}
+                      "core_evidence": str(out), "host_triple": host_triple}
             save(target / ".konnect-rename-owned.json", marker)
         else:
             require(sys.platform == "win32", "UNC checks require Windows")
@@ -637,7 +677,8 @@ def main():
                     and core["job_identity"] == identity
                     and core["workflow_sha"] == report["workflow_sha"]
                     and core["host"]["os"] == report["host"]["os"]
-                    and core["host"]["arch"] == report["host"]["arch"],
+                    and core["host"]["arch"] == report["host"]["arch"]
+                    and core["verified_host_triple"] == host_triple,
                     "UNC cache source/job/workflow/host mismatch")
             require(json.loads((core_out / "source-after.json").read_text(encoding="utf-8")) == before,
                     "UNC source differs from successful core source")
@@ -646,7 +687,8 @@ def main():
                     "UNC target is not a core-created external runner target")
             marker = json.loads((target / ".konnect-rename-owned.json").read_text(encoding="utf-8"))
             require(marker == {"source_sha": args.source_sha.lower(), "job_identity": identity,
-                               "core_evidence": str(core_out)}, "UNC target ownership mismatch")
+                               "core_evidence": str(core_out), "host_triple": host_triple},
+                    "UNC target ownership/host mismatch")
             require(bool(os.environ.get("KONNECT_RENAME_UNC_ROOT")), "workflow must provision UNC root")
             report["reused_core_evidence"] = str(core_out)
         runner.env["CARGO_TARGET_DIR"] = str(target)
@@ -658,11 +700,18 @@ def main():
         report["cargo_target_dir"] = str(target)
         report["build_environment"] = {key: runner.env[key] for key in (
             "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "RUST_TEST_THREADS",
-            "CARGO_PROFILE_DEV_DEBUG", "CARGO_PROFILE_TEST_DEBUG", "CARGO_INCREMENTAL"
+            "CARGO_PROFILE_DEV_DEBUG", "CARGO_PROFILE_TEST_DEBUG", "CARGO_INCREMENTAL",
+            "RUSTUP_TOOLCHAIN"
         )}
         report["tests"] = {}
         if args.mode == "core":
-            runner.run("konnect-build", ["cargo", "build", "--locked", "-p", "konnect"])
+            runner.run("workspace-rustfmt", [
+                "cargo", "fmt", "--all", "--", "--check",
+            ], timeout=120)
+            report["rustfmt"] = "passed"
+            runner.run("konnect-build", [
+                "cargo", "build", "--locked", "-p", "konnect", "--target", host_triple,
+            ])
             for label, module, count in (
                 ("rename-focused", "rename_revision_tests", 21),
                 ("rename-hierarchy", "rename_hierarchy_tests", 2),
@@ -670,6 +719,7 @@ def main():
             ):
                 log = runner.run(label, [
                     "cargo", "test", "--locked", "-p", "konnect-core", "--lib", module,
+                    "--target", host_triple,
                     "--", "--nocapture", "--test-threads=1",
                 ])
                 report["tests"][label] = test_counts(
@@ -677,6 +727,7 @@ def main():
                 )
             log = runner.run("workspace-tests", [
                 "cargo", "test", "--workspace", "--locked", "--lib", "--tests",
+                "--target", host_triple,
                 "--", "--test-threads=2",
             ])
             report["tests"]["workspace"] = test_counts(log)
@@ -684,17 +735,18 @@ def main():
             if remaining >= 600:
                 runner.run("workspace-clippy", [
                     "cargo", "clippy", "--workspace", "--locked", "--all-targets",
+                    "--target", host_triple,
                     "--", "-D", "warnings",
                 ], timeout=min(1200, int(remaining) - 60))
                 report["clippy"] = "passed"
             else:
                 report["clippy"] = "not run: less than 600s left in fixed invocation deadline"
             report["doctests"] = "not requested; --lib --tests does not include doctests"
-            report["rustfmt"] = "not run: optional; no rustfmt install attempted"
         else:
             log = runner.run("unc-served", [
                 "cargo", "test", "-p", "konnect-core", "--locked",
-                "--test", "project_rename_unc", "--", "--ignored", "--exact",
+                "--test", "project_rename_unc", "--target", host_triple,
+                "--", "--ignored", "--exact",
                 "windows::served_rename_preserves_unc_files_and_collisions",
                 "--nocapture", "--test-threads=1",
             ])
