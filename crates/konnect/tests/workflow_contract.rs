@@ -170,10 +170,7 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     assert_eq!(input["required"], true);
     assert_eq!(input["type"], "string");
     assert_eq!(config["env"]["CARGO_BUILD_JOBS"], 2);
-    assert_eq!(
-        config["env"]["TESTED_SOURCE_SHA"],
-        "${{ inputs.source_sha }}"
-    );
+    assert_eq!(config["env"]["TESTED_SOURCE_SHA"], "${{ inputs.source_sha }}");
     assert_eq!(
         config["env"]["VALIDATION_WORKFLOW_SHA"],
         "${{ github.workflow_sha }}"
@@ -215,6 +212,10 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
             .unwrap()
             .contains("scripts/rename_platform_checks.py"));
         assert!(core["run"].as_str().unwrap().contains("--mode core"));
+        assert!(core["run"]
+            .as_str()
+            .unwrap()
+            .contains("rename-evidence/core"));
         assert!(core.get("if").is_none());
         assert!(core.get("continue-on-error").is_none());
         let artifact = steps.last().unwrap();
@@ -241,6 +242,7 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         "if ($remaining.Count)",
         "finally",
         "--mode unc",
+        "--evidence \"$evidence/unc\"",
         "unc-share-lifecycle.json",
     ] {
         assert!(script.contains(required), "missing UNC boundary: {required}");
@@ -251,4 +253,7 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
         !script.contains("Get-SmbShare -Name $name -ErrorAction SilentlyContinue"),
         "SMB query errors must not count as verified absence"
     );
+    let preflight = jobs["windows"]["steps"][0]["run"].as_str().unwrap();
+    assert!(preflight.contains("git config --global core.autocrlf false"));
+    assert!(preflight.contains("git config --global core.eol lf"));
 }
