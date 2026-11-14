@@ -763,7 +763,7 @@ def windows_policy_evidence_path():
 
 
 def windows_policy_proof(runner):
-    """Validate the frozen apply/snapshot evidence, without registry access."""
+    """Validate apply/snapshot/ownership evidence, without registry access."""
     apply_path = windows_policy_evidence_path()
     state_path = (apply_path.parent / "policy-state.json").resolve(strict=True)
     require(state_path.parent == apply_path.parent and state_path.name == "policy-state.json"
@@ -792,15 +792,28 @@ def windows_policy_proof(runner):
     require(applied.get("status") == "applied" and isinstance(apply_identity, dict)
             and all(apply_identity.get(key) == value for key, value in identity.items()),
             "policy apply status/identity does not match this source/workflow/job/evidence")
-    policy = ["HKLM", r"Software\Policies\Microsoft\VisualStudio\SQM", "OptIn", "64"]
-    require(type(snapshot.get("version")) is int and snapshot["version"] == 1
-            and snapshot.get("identity") == apply_identity and snapshot.get("policy") == policy
-            and snapshot.get("intent") == "set_REG_DWORD_0",
-            "policy snapshot version/identity/target/intent differs from the frozen schema")
+    require(type(snapshot.get("version")) is int and snapshot.get("identity") == apply_identity,
+            "policy snapshot version type or apply identity differs")
+    import rename_windows_policy
+
+    # Reuse the reviewed full schema, including typed original and exact missing chain.
+    rename_windows_policy.validate(snapshot, identity)
+    ownership_path = (apply_path.parent / "policy-ownership.json").resolve(strict=True)
+    require(ownership_path.parent == apply_path.parent
+            and ownership_path.name == "policy-ownership.json" and ownership_path.is_file(),
+            "policy-ownership.json must be in the same evidence directory")
+    ownership, ownership_sha = bounded_json(ownership_path)
+    require(ownership.get("identity") == snapshot["identity"]
+            and ownership.get("creation_uncertain") is False
+            and isinstance(ownership.get("created"), list)
+            and ownership["created"] == snapshot["missing"],
+            "successful policy apply lacks complete, certain ownership of the created key chain")
     return {
         "status": "validated", "apply_path": str(apply_path), "apply_sha256": apply_sha,
         "state_path": str(state_path), "state_sha256": state_sha,
-        "identity": apply_identity, "version": 1, "policy": policy, "intent": "set_REG_DWORD_0",
+        "ownership_path": str(ownership_path), "ownership_sha256": ownership_sha,
+        "identity": apply_identity, "version": snapshot["version"],
+        "policy": snapshot["policy"], "intent": snapshot["intent"],
     }
 
 
@@ -854,7 +867,7 @@ def windows_compiler_probe(runner, target):
         "job_deadline_epoch": runner.report["validation_job_deadline_epoch"],
         "evidence_path": str(evidence),
         "policy_verification": (
-            "pending apply/snapshot validation; registry restoration workflow-owned"
+            "pending apply/snapshot/ownership validation; registry restoration workflow-owned"
         ),
         "owned_directory_removed": "not created",
     }
@@ -864,7 +877,8 @@ def windows_compiler_probe(runner, target):
         audit["policy_proof"] = windows_policy_proof(runner)
         audit["policy_evidence_path"] = audit["policy_proof"]["apply_path"]
         audit["policy_verification"] = (
-            "validated apply/snapshot schema, identity and hashes; registry restoration workflow-owned"
+            "validated apply/snapshot/ownership schemas, identities and hashes; "
+            "registry restoration workflow-owned"
         )
         program_files = runner.env.get("ProgramFiles(x86)")
         require(program_files and Path(program_files).is_absolute(),
@@ -915,7 +929,7 @@ def windows_compiler_probe(runner, target):
             audit.update(probe_source_path=str(source), object_path=str(obj),
                          probe_source_sha256=digest(source))
             require(windows_policy_proof(runner) == audit["policy_proof"],
-                    "policy apply/snapshot proof changed before compiler probe")
+                    "policy apply/snapshot/ownership proof changed before compiler probe")
             runner.capacity(initial=True)
             compile_log = runner.run("windows-compiler-probe", [
                 str(compiler), "/nologo", "/c", "/TC", "/GS-", f"/Fo{obj}", str(source),
@@ -928,7 +942,7 @@ def windows_compiler_probe(runner, target):
                     and digest(version_file) == compiler_manifest["toolset_version_file_sha256"],
                     "compiler/toolset identity changed during probe")
             require(windows_policy_proof(runner) == audit["policy_proof"],
-                    "policy apply/snapshot proof changed during compiler probe")
+                    "policy apply/snapshot/ownership proof changed during compiler probe")
             audit.update(object_bytes=obj.stat().st_size, object_sha256=digest(obj),
                          compile_log=str(compile_log))
         audit["owned_directory_removed"] = not owned.exists()
@@ -956,7 +970,7 @@ def require_core_compiler_probe(core, core_out, runner):
     policy_proof = windows_policy_proof(runner)
     require(probe.get("policy_evidence_path") == policy_proof["apply_path"]
             and probe.get("policy_proof") == policy_proof,
-            "UNC policy apply/snapshot proof differs from the validated core probe state")
+            "UNC policy apply/snapshot/ownership proof differs from the validated core probe state")
     state = core_out / "windows-compiler-probe.json"
     require(probe.get("evidence_path") == str(state)
             and json.loads(state.read_text(encoding="utf-8")) == probe,
