@@ -39,8 +39,10 @@ runs weekly nor responds to PR labels. Its version pin is not a new support clai
 
 ### Activation and branch protection
 
-Actions remain disabled while this setup PR is prepared. This document describes
-the intended policy, not an already-enforced GitHub setting.
+Ordinary CI and manual KiCad E2E remain individually disabled until their
+separate activation review. The manual rename-platform validation described
+below has explicit execution authorization. That exception does not authorize
+ordinary CI, release automation, branch-protection changes or a rename merge.
 
 After review and explicit authorization:
 
@@ -56,6 +58,38 @@ After review and explicit authorization:
 
 Hosted execution and required-check enforcement are pending until those steps
 are completed and verified. Local tests alone do not establish that hosted CI works.
+
+### Manual rename-platform validation
+
+`.github/workflows/rename-platforms.yml` has three explicit native jobs:
+Windows x64, Intel macOS and Apple Silicon macOS. No matrix, automatic trigger,
+package assembly, release or deployment is permitted. Each dispatch selects a
+full reviewed source SHA. Checkout disables persisted credentials. The job
+records both the workflow SHA and tested SHA, uses pinned tool/actions versions,
+checks available capacity before setup, bounds cargo concurrency and process
+lifetime, monitors the 500 MB memory reserve, and retains evidence for seven days.
+One shared 50-minute deadline starts before tool setup. Core work reserves five
+minutes for UNC, and UNC cannot create a share without at least three minutes
+remaining. The 60-minute job limit leaves additional cleanup/upload time.
+
+The first gates build the full core, execute the rename filesystem regressions,
+and check the workspace. Windows additionally uses a temporary localhost SMB
+share for an explicit UNC test and removes only its owned share in `finally`.
+Missing infrastructure or failed cleanup fails that gate; neither is a pass.
+These checks do not certify KiCad GUI editing, arbitrary network shares,
+schematic/PCB parity or same-session editor recovery.
+
+Before repository-wide Actions is enabled, audit the remote workflow list and
+keep all other repository-defined workflows disabled. The existing separately
+managed Dependabot service/configuration is explicitly preserved. GitHub can
+run that service independently of repository Actions disablement; it is not a
+release workflow and this validation does not change dependency-update policy.
+
+GitHub requires the dispatch workflow on the default branch. A workflow/policy-only
+bootstrap there and publication of the cleanup-derived candidate validation branch
+are authorized. Landing the cleanup parent or rename implementation on `main` is
+not. A green run qualifies only its recorded source, runner and tests. Investigate
+failures before any further dispatch; do not repeat runs until one is green.
 
 ## Proportionate scope review
 

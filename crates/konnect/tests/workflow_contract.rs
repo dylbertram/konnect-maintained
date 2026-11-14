@@ -20,7 +20,7 @@ fn workflow(name: &str) -> serde_json::Value {
 
 #[test]
 fn workflows_do_not_depend_on_node20_setup_protoc() {
-    for name in ["ci.yml", "e2e-kicad.yml"] {
+    for name in ["ci.yml", "e2e-kicad.yml", "rename-platforms.yml"] {
         let source =
             std::fs::read_to_string(repository_root().join(".github/workflows").join(name))
                 .unwrap_or_else(|error| panic!("failed to read {name}: {error}"));
@@ -60,7 +60,7 @@ fn active_workflows_cannot_publish_or_close_issues() {
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    assert_eq!(names, ["ci.yml", "e2e-kicad.yml"]);
+    assert_eq!(names, ["ci.yml", "e2e-kicad.yml", "rename-platforms.yml"]);
 
     for name in names {
         let config = workflow(&name);
@@ -159,4 +159,108 @@ fn core_ci_keeps_the_required_checks_in_one_bounded_linux_job() {
             .is_some_and(|action| action.starts_with("EmbarkStudios/cargo-deny-action@"))
             && step["with"]["command"] == "check licenses"
     }));
+}
+
+#[test]
+fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
+    let config = workflow("rename-platforms.yml");
+    let triggers = config["on"].as_object().unwrap();
+    assert_eq!(triggers.len(), 1);
+    let input = &triggers["workflow_dispatch"]["inputs"]["source_sha"];
+    assert_eq!(input["required"], true);
+    assert_eq!(input["type"], "string");
+    assert_eq!(config["env"]["CARGO_BUILD_JOBS"], 2);
+    assert_eq!(config["env"]["CMAKE_BUILD_PARALLEL_LEVEL"], 2);
+    assert_eq!(config["env"]["MSBUILDDISABLENODEREUSE"], 1);
+    assert_eq!(config["env"]["TESTED_SOURCE_SHA"], "${{ inputs.source_sha }}");
+    assert_eq!(
+        config["env"]["VALIDATION_WORKFLOW_SHA"],
+        "${{ github.workflow_sha }}"
+    );
+    let jobs = config["jobs"].as_object().unwrap();
+    assert_eq!(jobs.len(), 3);
+    for (id, runner) in [
+        ("windows", "windows-2025"),
+        ("macos-intel", "macos-15-intel"),
+        ("macos-arm", "macos-15"),
+    ] {
+        let job = &jobs[id];
+        assert_eq!(job["runs-on"], runner);
+        assert_eq!(job["timeout-minutes"], 60);
+        assert!(job.get("if").is_none());
+        assert!(job.get("continue-on-error").is_none());
+        let steps = job["steps"].as_array().unwrap();
+        assert_eq!(
+            steps[0]["name"],
+            "Validate input and runner capacity before setup"
+        );
+        assert!(steps[0].get("uses").is_none());
+        let preflight = steps[0]["run"].as_str().unwrap();
+        assert!(preflight.contains("VALIDATION_JOB_DEADLINE_EPOCH"));
+        assert!(preflight.contains("3000"));
+        let checkout = steps
+            .iter()
+            .find(|step| {
+                step["uses"]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("actions/checkout@"))
+            })
+            .unwrap();
+        assert_eq!(checkout["with"]["ref"], "${{ inputs.source_sha }}");
+        assert_eq!(checkout["with"]["persist-credentials"], false);
+        let core = steps
+            .iter()
+            .find(|step| step["name"] == "Build core and run native filesystem tests")
+            .unwrap();
+        assert!(core["run"]
+            .as_str()
+            .unwrap()
+            .contains("scripts/rename_platform_checks.py"));
+        assert!(core["run"].as_str().unwrap().contains("--mode core"));
+        assert!(core["run"]
+            .as_str()
+            .unwrap()
+            .contains("rename-evidence/core"));
+        assert!(core.get("if").is_none());
+        assert!(core.get("continue-on-error").is_none());
+        let artifact = steps.last().unwrap();
+        assert_eq!(artifact["if"], "always()");
+        assert!(artifact["uses"]
+            .as_str()
+            .unwrap()
+            .starts_with("actions/upload-artifact@"));
+        assert_eq!(artifact["with"]["retention-days"], 7);
+        assert_eq!(artifact["with"]["if-no-files-found"], "error");
+    }
+    let unc = jobs["windows"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["name"] == "Test an owned loopback UNC share")
+        .unwrap();
+    let script = unc["run"].as_str().unwrap();
+    for required in [
+        "New-SmbShare",
+        "Remove-SmbShare",
+        "Get-SmbShare -ErrorAction Stop",
+        "Where-Object { $_.Name -ieq $name }",
+        "if ($remaining.Count)",
+        "$remainingSeconds -lt 180",
+        "VALIDATION_JOB_DEADLINE_EPOCH",
+        "finally",
+        "--mode unc",
+        "--evidence \"$evidence/unc\"",
+        "unc-share-lifecycle.json",
+    ] {
+        assert!(script.contains(required), "missing UNC boundary: {required}");
+    }
+    assert!(unc.get("if").is_none());
+    assert!(unc.get("continue-on-error").is_none());
+    assert!(
+        !script.contains("Get-SmbShare -Name $name -ErrorAction SilentlyContinue"),
+        "SMB query errors must not count as verified absence"
+    );
+    let preflight = jobs["windows"]["steps"][0]["run"].as_str().unwrap();
+    assert!(preflight.contains("git config --global core.autocrlf false"));
+    assert!(preflight.contains("git config --global core.eol lf"));
 }
