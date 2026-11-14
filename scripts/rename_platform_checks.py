@@ -745,6 +745,183 @@ def verify_native_toolchain(report):
     return expected
 
 
+WINDOWS_PROBE_SOURCE = b"int konnect_rename_compiler_probe(void) { return 0; }\n"
+
+
+def windows_policy_evidence_path():
+    raw = os.environ.get("VALIDATION_WINDOWS_POLICY_EVIDENCE")
+    require(raw and Path(raw).is_absolute(),
+            "Windows requires absolute VALIDATION_WINDOWS_POLICY_EVIDENCE from workflow apply")
+    path = Path(raw).resolve(strict=True)
+    require(not inside(path, ROOT) and path.is_file(),
+            "Windows policy evidence must be an existing external file")
+    # The policy author owns the schema and apply/restore checks. Do not read it.
+    return path
+
+
+def windows_image_version(path):
+    """Read the compiler's fixed PE version metadata without spawning it."""
+    api = ctypes.WinDLL("version", use_last_error=True)
+    api.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
+    api.GetFileVersionInfoSizeW.restype = wintypes.DWORD
+    api.GetFileVersionInfoW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p
+    ]
+    api.VerQueryValueW.argtypes = [
+        ctypes.c_void_p, wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.UINT),
+    ]
+    ignored = wintypes.DWORD()
+    size = api.GetFileVersionInfoSizeW(str(path), ctypes.byref(ignored))
+    require(0 < size <= 1024 * 1024, "missing or oversized compiler image version resource")
+    buffer = ctypes.create_string_buffer(size)
+    require(api.GetFileVersionInfoW(str(path), 0, size, buffer),
+            f"GetFileVersionInfoW failed: {ctypes.get_last_error()}")
+    pointer = ctypes.c_void_p()
+    length = wintypes.UINT()
+    require(api.VerQueryValueW(buffer, "\\", ctypes.byref(pointer), ctypes.byref(length)),
+            f"VerQueryValueW failed: {ctypes.get_last_error()}")
+
+    class FixedInfo(ctypes.Structure):
+        _fields_ = [(name, wintypes.DWORD) for name in (
+            "signature", "struct_version", "file_ms", "file_ls", "product_ms", "product_ls",
+            "flags_mask", "flags", "os", "file_type", "subtype", "date_ms", "date_ls"
+        )]
+
+    require(pointer.value and length.value >= ctypes.sizeof(FixedInfo),
+            "compiler fixed image version is incomplete")
+    info = ctypes.cast(pointer, ctypes.POINTER(FixedInfo)).contents
+    require(info.signature == 0xFEEF04BD, "invalid compiler fixed image version signature")
+    return ".".join(str(value) for value in (
+        info.file_ms >> 16, info.file_ms & 0xFFFF, info.file_ls >> 16, info.file_ls & 0xFFFF
+    ))
+
+
+def windows_compiler_probe(runner, target):
+    """One real header-free compile; same strict owned-job rules as the build."""
+    require(sys.platform == "win32"
+            and runner.report["verified_host_triple"] == "x86_64-pc-windows-msvc",
+            "compiler probe requires the already verified native Windows x64 host")
+    evidence = runner.out / "windows-compiler-probe.json"
+    audit = {
+        "status": "incomplete", "scope": "one real cl.exe /c compile, no headers or linking",
+        "source_sha": runner.report["source_sha"], "job_identity": runner.report["job_identity"],
+        "job_deadline_epoch": runner.report["validation_job_deadline_epoch"],
+        "evidence_path": str(evidence),
+        "policy_verification": "workflow-owned apply/restore; evidence path only, JSON not read",
+        "owned_directory_removed": "not created",
+    }
+    runner.report["windows_compiler_probe"] = audit
+    owned = None
+    try:
+        policy_path = windows_policy_evidence_path()
+        audit["policy_evidence_path"] = str(policy_path)
+        program_files = runner.env.get("ProgramFiles(x86)")
+        require(program_files and Path(program_files).is_absolute(),
+                "absolute ProgramFiles(x86) required for fixed vswhere location")
+        vswhere = Path(program_files) / "Microsoft Visual Studio/Installer/vswhere.exe"
+        require(vswhere.is_file(), "fixed Visual Studio Installer vswhere.exe is unavailable")
+        vswhere = vswhere.resolve(strict=True)
+        log = runner.run("windows-vswhere", [
+            str(vswhere), "-latest", "-products", "*",
+            "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-format", "json",
+        ], timeout=30)
+        installations = json.loads(log.read_text(encoding="utf-8-sig"))
+        require(isinstance(installations, list) and len(installations) == 1
+                and isinstance(installations[0], dict),
+                "vswhere must return exactly one matching Visual Studio installation")
+        installation = installations[0].get("installationPath")
+        require(isinstance(installation, str) and Path(installation).is_absolute(),
+                "vswhere installationPath must be absolute")
+        installation = Path(installation).resolve(strict=True)
+        require(installation.is_dir(), "vswhere installationPath is not a directory")
+        version_file = installation / "VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt"
+        version = version_file.read_text(encoding="utf-8-sig").strip()
+        require(re.fullmatch(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,6}", version),
+                "unsafe or unsupported default MSVC toolset version")
+        compiler = installation / "VC/Tools/MSVC" / version / "bin/Hostx64/x64/cl.exe"
+        require(compiler.is_absolute() and compiler.is_file(), "native x64 cl.exe is unavailable")
+        compiler = compiler.resolve(strict=True)
+        compiler_manifest = {
+            "path": str(compiler), "sha256": digest(compiler),
+            "image_version": windows_image_version(compiler), "toolset_version": version,
+            "toolset_version_file": str(version_file),
+            "toolset_version_file_sha256": digest(version_file),
+            "installation_path": str(installation), "vswhere_path": str(vswhere),
+            "vswhere_log": str(log),
+        }
+        audit["compiler"] = compiler_manifest
+        with tempfile.TemporaryDirectory(prefix="owned-compiler-probe-", dir=target) as temporary:
+            owned = Path(temporary).resolve(strict=True)
+            require(owned.parent == target, "compiler probe must be in this owned external target")
+            audit["owned_directory"] = str(owned)
+            source = owned / "konnect_rename_compiler_probe.c"
+            obj = owned / "konnect_rename_compiler_probe.obj"
+            with source.open("xb") as handle:
+                handle.write(WINDOWS_PROBE_SOURCE)
+            # cl may overwrite only this exclusively created owned output file.
+            with obj.open("xb"):
+                pass
+            audit.update(probe_source_path=str(source), object_path=str(obj),
+                         probe_source_sha256=digest(source))
+            runner.capacity(initial=True)
+            compile_log = runner.run("windows-compiler-probe", [
+                str(compiler), "/nologo", "/c", "/TC", "/GS-", f"/Fo{obj}", str(source),
+            ], timeout=60)
+            require(not obj.is_symlink() and obj.is_file() and obj.stat().st_size > 0,
+                    "compiler probe did not produce a nonempty owned object")
+            require(source.read_bytes() == WINDOWS_PROBE_SOURCE,
+                    "compiler probe source bytes changed")
+            require(digest(compiler) == compiler_manifest["sha256"]
+                    and digest(version_file) == compiler_manifest["toolset_version_file_sha256"],
+                    "compiler/toolset identity changed during probe")
+            audit.update(object_bytes=obj.stat().st_size, object_sha256=digest(obj),
+                         compile_log=str(compile_log))
+        audit["owned_directory_removed"] = not owned.exists()
+        require(audit["owned_directory_removed"], "owned compiler probe directory remains")
+        audit["status"] = "passed"
+        return audit
+    except BaseException as error:
+        audit.update(status="failed", error=repr(error))
+        raise
+    finally:
+        if owned is not None:
+            audit["owned_directory_removed"] = not owned.exists()
+        save(evidence, audit)
+
+
+def require_core_compiler_probe(core, core_out, runner):
+    """Reuse only the completed same-job probe; never spawn cl.exe for UNC."""
+    probe = core.get("windows_compiler_probe")
+    require(isinstance(probe, dict) and probe.get("status") == "passed"
+            and probe.get("owned_directory_removed") is True
+            and probe.get("source_sha") == runner.report["source_sha"]
+            and probe.get("job_identity") == runner.report["job_identity"]
+            and probe.get("job_deadline_epoch") == runner.report["validation_job_deadline_epoch"],
+            "UNC requires verified successful same-job Windows core compiler probe")
+    require(probe.get("policy_evidence_path") == str(windows_policy_evidence_path()),
+            "UNC policy evidence path differs from the core probe state")
+    state = core_out / "windows-compiler-probe.json"
+    require(probe.get("evidence_path") == str(state)
+            and json.loads(state.read_text(encoding="utf-8")) == probe,
+            "UNC compiler probe state path/content differs from successful core report")
+    require(probe.get("probe_source_sha256") == hashlib.sha256(WINDOWS_PROBE_SOURCE).hexdigest()
+            and isinstance(probe.get("object_sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", probe["object_sha256"])
+            and isinstance(probe.get("object_bytes"), int) and probe["object_bytes"] > 0,
+            "core compiler probe lacks the expected source/object hash evidence")
+    manifest = probe.get("compiler")
+    require(isinstance(manifest, dict), "core compiler path manifest is missing")
+    compiler = Path(manifest["path"])
+    version_file = Path(manifest["toolset_version_file"])
+    require(compiler.is_absolute() and compiler.is_file()
+            and version_file.is_absolute() and version_file.is_file()
+            and digest(compiler) == manifest["sha256"]
+            and digest(version_file) == manifest["toolset_version_file_sha256"],
+            "core compiler/toolset path manifest changed before UNC")
+    return probe
+
+
 def main():
     global DEADLINE
     parser = argparse.ArgumentParser(description=__doc__)
@@ -773,6 +950,11 @@ def main():
         "coverage_limits": "Rust tests on native filesystem, not full native KiCad/GUI tests",
         "installs": "none; workflow must provision rustc, cargo and protoc beforehand",
     }
+    if sys.platform == "win32":
+        report["windows_compiler_probe"] = {
+            "status": "not_run",
+            "scope": "mandatory pre-build compile in core; UNC requires same-job core probe evidence",
+        }
     runner = Runner(out, report)
     before = None
     primary = None
@@ -871,6 +1053,7 @@ def main():
                     "UNC cache source/job/workflow/host/shared-deadline/parallelism/platforms mismatch")
             require(json.loads((core_out / "source-after.json").read_text(encoding="utf-8")) == before,
                     "UNC source differs from successful core source")
+            core_probe = require_core_compiler_probe(core, core_out, runner)
             target = Path(core["cargo_target_dir"]).resolve(strict=True)
             require(target.parent == temp and target.name.startswith("konnect-rename-target-"),
                     "UNC target is not a core-created external runner target")
@@ -879,10 +1062,13 @@ def main():
                                "core_evidence": str(core_out), "host_triple": host_triple,
                                "job_deadline_epoch": job_deadline_epoch,
                                "build_parallelism": parallelism,
-                               "requested_platforms": requested_platforms},
+                               "requested_platforms": requested_platforms,
+                               "windows_compiler_probe": core_probe},
                     "UNC target ownership/host/shared-deadline/parallelism/platforms mismatch")
             require(bool(os.environ.get("KONNECT_RENAME_UNC_ROOT")), "workflow must provision UNC root")
             report["reused_core_evidence"] = str(core_out)
+            report["windows_compiler_probe"] = core_probe
+            report["windows_compiler_probe_scope"] = "verified core evidence reused; probe not rerun"
         runner.env["CARGO_TARGET_DIR"] = str(target)
         runner.env["TMPDIR"] = str(temp)
         runner.env["TMP"] = str(temp)
@@ -901,6 +1087,15 @@ def main():
                 "cargo", "fmt", "--all", "--", "--check",
             ], timeout=120)
             report["rustfmt"] = "passed"
+            if sys.platform == "win32":
+                probe = windows_compiler_probe(runner, target)
+                marker["windows_compiler_probe"] = probe
+                save(target / ".konnect-rename-owned.json", marker)
+                report["windows_compiler_probe_scope"] = "mandatory pre-build native compiler probe"
+            else:
+                report["windows_compiler_probe"] = {
+                    "status": "not_applicable", "scope": "macOS; no Windows probe or policy marker read"
+                }
             runner.run("konnect-build", [
                 "cargo", "build", "--locked", "-p", "konnect", "--target", host_triple,
             ])
