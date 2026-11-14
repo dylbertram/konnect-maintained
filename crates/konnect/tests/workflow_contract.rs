@@ -294,3 +294,30 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     assert!(preflight.contains("git config --global core.autocrlf false"));
     assert!(preflight.contains("git config --global core.eol lf"));
 }
+
+#[test]
+fn windows_registry_trial_is_restored_before_evidence_upload() {
+    let config = workflow("rename-platforms.yml");
+    let steps = config["jobs"]["windows"]["steps"].as_array().unwrap();
+    let position = |name: &str| steps.iter().position(|step| step["name"] == name).unwrap();
+    let apply = position("Apply disposable runner telemetry policy");
+    let core = position("Build core and run native filesystem tests");
+    let unc = position("Test an owned loopback UNC share");
+    let restore = position("Restore disposable runner telemetry policy");
+    let upload = position("Retain Windows evidence");
+    assert!(apply < core && core < unc && unc < restore && restore < upload);
+    assert_eq!(steps[apply]["id"], "windows_policy");
+    assert!(steps[apply].get("if").is_none());
+    assert_eq!(
+        steps[restore]["if"],
+        "always() && (steps.windows_policy.outcome == 'success' || steps.windows_policy.outcome == 'failure')"
+    );
+    for (index, action) in [(apply, "apply"), (restore, "restore")] {
+        let script = steps[index]["run"].as_str().unwrap();
+        assert!(script.contains("scripts/rename_windows_policy.py"));
+        assert!(script.contains(&format!("--action {action}")));
+        assert!(script.contains("rename-evidence/policy"));
+        assert!(script.contains("exit $LASTEXITCODE"));
+        assert!(steps[index].get("continue-on-error").is_none());
+    }
+}
