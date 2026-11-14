@@ -44,8 +44,11 @@ jobs:
           $os = Get-CimInstance Win32_OperatingSystem
           $available = [long]$os.FreePhysicalMemory * 1024
           $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($env:RUNNER_TEMP).Substring(0,1))
-          @{ available_memory = $available; free_disk = $drive.Free; cpu = $env:NUMBER_OF_PROCESSORS } | ConvertTo-Json
-          if ($available -lt 3721225472 -or $drive.Free -lt 6442450944) { throw "Insufficient runner reserves" }
+          $evidence = Join-Path $env:RUNNER_TEMP "rename-evidence"
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          $capacity = @{ available_memory = $available; free_disk = $drive.Free; cpu = $env:NUMBER_OF_PROCESSORS; minimum_tree_budget = 2147483648; reserve = 500000000; headroom = 268435456 }
+          $capacity | ConvertTo-Json | Tee-Object -FilePath (Join-Path $evidence "preflight-capacity.json")
+          if ($available -lt 2915919104 -or $drive.Free -lt 6442450944) { throw "Insufficient runner reserves" }
           # Protected byte hashes must not be changed by Windows checkout EOL conversion.
           git config --global core.autocrlf false
           if ($LASTEXITCODE -ne 0) { throw "Cannot disable checkout EOL conversion" }
@@ -138,8 +141,14 @@ jobs:
           counts = {key: int(value) for key, value in re.findall(r"^([^:\n]+):\s+(\d+)", text, re.M)}
           available = page * sum(counts[key] for key in ["Pages free", "Pages inactive", "Pages speculative"])
           disk = shutil.disk_usage(os.environ["RUNNER_TEMP"]).free
-          print(json.dumps({"available_memory": available, "free_disk": disk, "cpu": os.cpu_count()}))
-          assert available >= 3721225472 and disk >= 6442450944, "Insufficient runner reserves"
+          evidence = os.path.join(os.environ["RUNNER_TEMP"], "rename-evidence")
+          os.makedirs(evidence, exist_ok=False)
+          capacity = {"available_memory": available, "free_disk": disk, "cpu": os.cpu_count(),
+                      "minimum_tree_budget": 2147483648, "reserve": 500000000, "headroom": 268435456}
+          with open(os.path.join(evidence, "preflight-capacity.json"), "w", encoding="utf-8") as output:
+              json.dump(capacity, output, indent=2)
+          print(json.dumps(capacity))
+          assert available >= 2915919104 and disk >= 6442450944, "Insufficient runner reserves"
           PY
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -172,6 +181,10 @@ jobs:
     name: Rename on macOS Apple Silicon
     runs-on: macos-15
     timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 1
+      CMAKE_BUILD_PARALLEL_LEVEL: 1
+      RUST_TEST_THREADS: 1
     steps:
       - name: Validate input and runner capacity before setup
         shell: bash
@@ -187,8 +200,14 @@ jobs:
           counts = {key: int(value) for key, value in re.findall(r"^([^:\n]+):\s+(\d+)", text, re.M)}
           available = page * sum(counts[key] for key in ["Pages free", "Pages inactive", "Pages speculative"])
           disk = shutil.disk_usage(os.environ["RUNNER_TEMP"]).free
-          print(json.dumps({"available_memory": available, "free_disk": disk, "cpu": os.cpu_count()}))
-          assert available >= 3721225472 and disk >= 6442450944, "Insufficient runner reserves"
+          evidence = os.path.join(os.environ["RUNNER_TEMP"], "rename-evidence")
+          os.makedirs(evidence, exist_ok=False)
+          capacity = {"available_memory": available, "free_disk": disk, "cpu": os.cpu_count(),
+                      "minimum_tree_budget": 2147483648, "reserve": 500000000, "headroom": 268435456}
+          with open(os.path.join(evidence, "preflight-capacity.json"), "w", encoding="utf-8") as output:
+              json.dump(capacity, output, indent=2)
+          print(json.dumps(capacity))
+          assert available >= 2915919104 and disk >= 6442450944, "Insufficient runner reserves"
           PY
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

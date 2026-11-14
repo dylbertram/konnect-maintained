@@ -71,6 +71,9 @@ lifetime, monitors the 500 MB memory reserve, and retains evidence for seven day
 One shared 50-minute deadline starts before tool setup. Core work reserves five
 minutes for UNC, and UNC cannot create a share without at least three minutes
 remaining. The 60-minute job limit leaves additional cleanup/upload time.
+Apple Silicon uses one build/test worker. Preflight admits a minimum 2 GiB tree
+budget plus the unchanged 500 MB reserve and 256 MiB headroom; capacity is
+measured again after setup. Capacity refusals retain their measurements.
 
 The first gates build the full core, execute the rename filesystem regressions,
 and check the workspace. Windows additionally uses a temporary localhost SMB
