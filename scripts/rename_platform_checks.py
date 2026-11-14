@@ -881,7 +881,7 @@ def windows_compiler_probe(runner, target):
             "validated apply/snapshot/ownership schemas, identities and hashes; "
             "registry restoration workflow-owned"
         )
-        program_files = runner.env.get("ProgramFiles(x86)")
+        program_files = runner.env.get("PROGRAMFILES(X86)")
         require(program_files and Path(program_files).is_absolute(),
                 "absolute ProgramFiles(x86) required for fixed vswhere location")
         vswhere = Path(program_files) / "Microsoft Visual Studio/Installer/vswhere.exe"
