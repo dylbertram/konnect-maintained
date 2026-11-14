@@ -170,6 +170,8 @@ fn rename_validation_is_manual_read_only_and_tests_an_exact_source_commit() {
     assert_eq!(input["required"], true);
     assert_eq!(input["type"], "string");
     assert_eq!(config["env"]["CARGO_BUILD_JOBS"], 2);
+    assert_eq!(config["env"]["CMAKE_BUILD_PARALLEL_LEVEL"], 2);
+    assert_eq!(config["env"]["MSBUILDDISABLENODEREUSE"], 1);
     assert_eq!(config["env"]["TESTED_SOURCE_SHA"], "${{ inputs.source_sha }}");
     assert_eq!(
         config["env"]["VALIDATION_WORKFLOW_SHA"],
